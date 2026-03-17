@@ -123,6 +123,10 @@ const ui = {
             app.currentFiles.splice(e.currentTarget.dataset.index, 1);
             this.renderPreviews();
         }));
+        this.dom.previewArea.querySelectorAll('.remove-btn').forEach(btn => btn.addEventListener('click', (e) => {
+            app.currentFiles.splice(e.currentTarget.dataset.index, 1);
+            this.renderPreviews();
+        }));
     },
 
     formatText(text) {
@@ -265,12 +269,12 @@ const engine = {
             return false;
         }
         
-        ui.showInitLoader(true, 0, "Connecting to Hugging Face...");
+        ui.showInitLoader(true, 0, "Initializing Sky Model...");
 
         try {
-            // WORKING MODEL (Verified)
-            const selectedModel = "Qwen2.5-1.5B-Instruct-q4f16_1-MLC"; 
-            // const selectedModel = "hafijshaikh/sky"; // Only works if compiled for WebLLM
+            // --- MODEL CONFIGURATION ---
+            // Pointing to your requested model.
+            const selectedModel = "hafijshaikh/sky"; 
 
             this.instance = await webllm.CreateMLCEngine(selectedModel, {
                 initProgressCallback: (report) => {
@@ -289,8 +293,8 @@ const engine = {
             
         } catch (e) {
             console.error(e);
-            ui.showInitLoader(true, 0, "Error: " + e.message);
-            await new Promise(r => setTimeout(r, 3000));
+            ui.showInitLoader(true, 0, "Error: " + e.message + " (Check if model is WebLLM compatible)");
+            await new Promise(r => setTimeout(r, 5000));
             ui.showInitLoader(false);
             return false;
         }
