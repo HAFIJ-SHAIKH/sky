@@ -1,90 +1,78 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Sky | AI Workspace</title>
-    
-    <!-- Fonts & Icons -->
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Outfit:wght@500;700&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    
-    <!-- Custom Styles -->
-    <link rel="stylesheet" href="style.css">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sky AI - WebGPU</title>
+  <link rel="stylesheet" href="style.css">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 </head>
 <body>
+  <!-- Background Pattern -->
+  <div class="bg-pattern"></div>
 
-    <!-- Sidebar Overlay (Mobile) -->
-    <div class="sidebar-overlay" id="sidebar-overlay"></div>
-
-    <!-- Floating Context Menu -->
-    <div id="context-menu" class="context-menu">
-        <button class="ctx-btn" id="ctx-edit"><i class="fa-solid fa-pen"></i> Edit</button>
-        <button class="ctx-btn" id="ctx-copy"><i class="fa-solid fa-copy"></i> Copy Text</button>
+  <!-- Loading Screen -->
+  <div class="loading-screen" id="loadingScreen">
+    <div class="loading-title">Sky</div>
+    <div class="loading-bar-container">
+      <div class="loading-label" id="loadingLabel">Initializing WebGPU...</div>
+      <div class="slider-track">
+        <div class="slider-fill" id="sliderFill"></div>
+      </div>
+      <div class="loading-percent" id="loadingPercent">0%</div>
     </div>
+  </div>
 
-    <div class="app-container">
-        <!-- Sidebar -->
-        <aside class="sidebar" id="sidebar">
-            <div class="sidebar-header">
-                <div class="brand"><i class="fa-solid fa-cloud"></i> Sky</div>
-            </div>
-            
-            <button class="new-chat-btn" id="new-chat-btn"><i class="fa-solid fa-plus"></i> New Session</button>
+  <!-- Chat Interface -->
+  <div class="chat-container" id="chatContainer">
+    <!-- Header -->
+    <header class="chat-header">
+      <span class="brand-name">Sky</span>
+      <div class="status-badge">
+        <div class="status-dot" id="statusDot"></div>
+        <span class="status-text" id="statusText">Initializing...</span>
+      </div>
+    </header>
 
-            <div class="session-list" id="session-list"></div>
-            
-            <div class="sidebar-footer">
-                <div class="status-pill" id="status-pill">
-                    <div class="status-dot" id="status-dot"></div>
-                    <span class="status-text" id="status-text">System Offline</span>
-                </div>
-            </div>
-        </aside>
-
-        <main class="main-content">
-            <!-- Mobile Header -->
-            <div class="mobile-header">
-                <button class="menu-toggle" id="menu-toggle"><i class="fa-solid fa-bars"></i></button>
-                <span class="mobile-title">Sky Workspace</span>
-            </div>
-
-            <!-- Chat Area -->
-            <div class="chat-viewport" id="chat-viewport">
-                <div class="chat-container" id="chat-list">
-                    <div class="message-row sky">
-                        <div class="message-content welcome-banner">
-                            <h2>Welcome to <strong>Sky Workspace</strong></h2>
-                            <p>Send a message to initialize the AI.<br>The model (approx 6GB) will be downloaded automatically.</p>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            
-            <!-- Input Area -->
-            <div class="input-dock-wrapper">
-                <div class="upload-preview-area" id="upload-preview-area"></div>
-                <div class="input-dock">
-                    <input type="file" id="file-input" hidden multiple accept="image/*,.pdf">
-                    <button id="upload-btn" class="dock-btn" title="Upload Image/PDF"><i class="fa-solid fa-paperclip"></i></button>
-                    <textarea id="msg-input" rows="1" placeholder="Message Sky..."></textarea>
-                    <button id="send-btn" class="dock-btn send-btn" aria-label="Send"><i class="fa-solid fa-arrow-up"></i></button>
-                </div>
-            </div>
-        </main>
-    </div>
-
-    <!-- Initial Loader Overlay (Restored from original) -->
-    <div class="loader-overlay" id="loader-overlay">
-        <i class="fa-solid fa-microchip loader-icon"></i>
-        <h2 class="modal-title">Initializing Sky</h2>
-        <p class="modal-desc" id="loader-log">Waiting...</p>
-        <div class="progress-container">
-            <div class="progress-bar" id="progress-bar"></div>
+    <!-- Messages -->
+    <div class="messages-area" id="messagesArea">
+      <div class="welcome">
+        <div class="welcome-icon">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+          </svg>
         </div>
+        <h1 class="welcome-title">Hello, I'm Sky</h1>
+        <p class="welcome-subtitle">Running locally in your browser using WebGPU. Ask me anything.</p>
+        <div class="suggestions">
+          <button class="suggestion-btn" onclick="useSuggestion('Write a Python function')">Python code</button>
+          <button class="suggestion-btn" onclick="useSuggestion('Solve: 2x + 5 = 15')">Math</button>
+          <button class="suggestion-btn" onclick="useSuggestion('Write a haiku about AI')">Creative</button>
+        </div>
+      </div>
     </div>
 
-    <!-- Main Script -->
-    <script type="module" src="script.js"></script>
+    <!-- Input Area -->
+    <div class="input-area">
+      <div class="input-row">
+        <div class="input-box">
+          <textarea 
+            class="input-text" 
+            id="inputText" 
+            placeholder="Ask Sky anything..."
+            rows="1"
+          ></textarea>
+        </div>
+        <button class="send-button" id="sendBtn" disabled aria-label="Send">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- WebLLM Library (ESM) -->
+  <script type="module" src="script.js"></script>
 </body>
 </html>
