@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Sky Agent - WebGPU</title>
+  <title>Opensky Agent</title>
   <link rel="stylesheet" href="style.css">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 </head>
@@ -12,27 +12,31 @@
 
   <!-- Loading Screen -->
   <div class="loading-screen" id="loadingScreen">
-    <div class="loading-title">Sky Agent</div>
+    <div class="loading-title">Opensky</div>
     <div class="loading-bar-container">
-      <div class="loading-label" id="loadingLabel">Initializing WebGPU...</div>
+      <div class="loading-label" id="loadingLabel">Initializing Opensky Engine...</div>
       <div class="slider-track">
         <div class="slider-fill" id="sliderFill"></div>
       </div>
       <div class="loading-percent" id="loadingPercent">0%</div>
+      <div class="loading-version" id="loadingVersion"></div>
     </div>
   </div>
 
   <!-- Main UI -->
   <div class="chat-container" id="chatContainer">
     <header class="chat-header">
-      <span class="brand-name">Sky Agent</span>
+      <div class="brand-info">
+        <span class="brand-name">Opensky</span>
+        <span class="brand-author">by Hafij Shaikh</span>
+      </div>
       <div class="status-badge">
         <div class="status-dot" id="statusDot"></div>
         <span class="status-text" id="statusText">Initializing...</span>
       </div>
     </header>
 
-    <!-- Agent Thinking Panel (Hidden by default) -->
+    <!-- Agent Thinking Panel -->
     <div class="thinking-panel" id="thinkingPanel" style="display: none;">
       <div class="thinking-header">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
@@ -42,7 +46,7 @@
     </div>
 
     <div class="messages-area" id="messagesArea">
-      <!-- Welcome message injected via JS -->
+      <!-- Messages injected via JS -->
     </div>
 
     <div class="input-area">
@@ -51,7 +55,7 @@
           <textarea 
             class="input-text" 
             id="inputText" 
-            placeholder="Ask Sky to perform a task..."
+            placeholder="Ask Opensky..."
             rows="1"
           ></textarea>
         </div>
