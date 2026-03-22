@@ -14,12 +14,12 @@
   <div class="loading-screen" id="loadingScreen">
     <div class="loading-title">Opensky</div>
     <div class="loading-bar-container">
-      <div class="loading-label" id="loadingLabel">Initializing Opensky Engine...</div>
+      <div class="loading-label" id="loadingLabel">Checking WebGPU Support...</div>
       <div class="slider-track">
         <div class="slider-fill" id="sliderFill"></div>
       </div>
       <div class="loading-percent" id="loadingPercent">0%</div>
-      <div class="loading-version" id="loadingVersion"></div>
+      <div class="loading-version" id="loadingVersion">v3.2.0-Llama-Specialist</div>
     </div>
   </div>
 
@@ -36,7 +36,7 @@
       </div>
     </header>
 
-    <!-- Agent Thinking Panel -->
+    <!-- Agent Reasoning Panel -->
     <div class="thinking-panel" id="thinkingPanel" style="display: none;">
       <div class="thinking-header">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
@@ -45,9 +45,7 @@
       <div class="thinking-content" id="thinkingContent"></div>
     </div>
 
-    <div class="messages-area" id="messagesArea">
-      <!-- Messages injected via JS -->
-    </div>
+    <div class="messages-area" id="messagesArea"></div>
 
     <div class="input-area">
       <div class="input-row">
