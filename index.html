@@ -8,7 +8,6 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 </head>
 <body>
-  <!-- Background Pattern -->
   <div class="bg-pattern"></div>
 
   <!-- Loading Screen -->
@@ -20,12 +19,19 @@
         <div class="slider-fill" id="sliderFill"></div>
       </div>
       <div class="loading-percent" id="loadingPercent">0%</div>
+      
+      <!-- Fallback Button Container (Hidden by default) -->
+      <div id="errorContainer" style="display: none; margin-top: 1.5rem; text-align: center;">
+        <p style="font-size: 0.75rem; color: #ef4444; margin-bottom: 0.75rem;" id="errorMsg">Model load failed.</p>
+        <button id="fallbackBtn" class="fallback-btn">
+          Load Default Model (Qwen)
+        </button>
+      </div>
     </div>
   </div>
 
   <!-- Chat Interface -->
   <div class="chat-container" id="chatContainer">
-    <!-- Header -->
     <header class="chat-header">
       <span class="brand-name">Sky</span>
       <div class="status-badge">
@@ -34,7 +40,6 @@
       </div>
     </header>
 
-    <!-- Messages -->
     <div class="messages-area" id="messagesArea">
       <div class="welcome">
         <div class="welcome-icon">
@@ -43,7 +48,7 @@
           </svg>
         </div>
         <h1 class="welcome-title">Hello, I'm Sky</h1>
-        <p class="welcome-subtitle">Running locally in your browser using WebGPU. Ask me anything.</p>
+        <p class="welcome-subtitle">Running locally in your browser using WebGPU.</p>
         <div class="suggestions">
           <button class="suggestion-btn" onclick="useSuggestion('Write a Python function')">Python code</button>
           <button class="suggestion-btn" onclick="useSuggestion('Solve: 2x + 5 = 15')">Math</button>
@@ -52,7 +57,6 @@
       </div>
     </div>
 
-    <!-- Input Area -->
     <div class="input-area">
       <div class="input-row">
         <div class="input-box">
@@ -72,7 +76,6 @@
     </div>
   </div>
 
-  <!-- WebLLM Library (ESM) -->
   <script type="module" src="script.js"></script>
 </body>
 </html>
