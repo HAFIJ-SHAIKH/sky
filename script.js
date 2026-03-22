@@ -1,6 +1,12 @@
 import * as webllm from "https://esm.run/@mlc-ai/webllm";
 
-// --- State Management ---
+// --- Configuration ---
+// "hafijshaikh/sky" requires compiled WebGPU files (.wasm, .json) in the repo.
+// If missing, we fall back to a working model to ensure the UI functions.
+const CUSTOM_MODEL = "hafijshaikh/sky";
+const FALLBACK_MODEL = "Qwen2.5-1.5B-Instruct-q4f16_1-MLC";
+
+// --- State ---
 let engine = null;
 let isGenerating = false;
 let chatHistory = [];
@@ -14,38 +20,52 @@ const sendBtn = document.getElementById('sendBtn');
 const sliderFill = document.getElementById('sliderFill');
 const loadingPercent = document.getElementById('loadingPercent');
 const loadingLabel = document.getElementById('loadingLabel');
+const errorContainer = document.getElementById('errorContainer');
+const fallbackBtn = document.getElementById('fallbackBtn');
 const statusDot = document.getElementById('statusDot');
 const statusText = document.getElementById('statusText');
 
 // --- Initialization ---
 
-async function initEngine() {
-  // Model ID from Hugging Face
-  const selectedModel = "hafijshaikh/sky";
-
+async function initEngine(modelId) {
   try {
-    // Create the engine, which triggers the file download
-    engine = await webllm.CreateMLCEngine(selectedModel, {
+    // Reset UI state
+    errorContainer.style.display = 'none';
+    loadingLabel.style.color = "var(--fg-muted)";
+    loadingPercent.textContent = "0%";
+    sliderFill.style.width = "0%";
+    sliderFill.style.background = "linear-gradient(90deg, var(--accent), var(--accent-light))";
+
+    loadingLabel.textContent = "Checking WebGPU support...";
+
+    // Check WebGPU
+    if (!navigator.gpu) {
+      throw new Error("WebGPU not supported. Please use Chrome 113+ or Edge 113+.");
+    }
+
+    loadingLabel.textContent = `Loading ${modelId}...`;
+
+    console.log(`Loading model: ${modelId}`);
+
+    engine = await webllm.CreateMLCEngine(modelId, {
       initProgressCallback: (report) => {
         updateLoadingProgress(report);
       }
     });
-    
+
+    // Success
     finishLoading();
+
   } catch (err) {
-    console.error("Failed to load model:", err);
-    loadingLabel.textContent = `Error: ${err.message}. Check console for details.`;
-    loadingLabel.style.color = "red";
+    console.error("Model load error:", err);
+    showError(err.message, modelId);
   }
 }
 
 function updateLoadingProgress(report) {
-  // Calculate percentage (WebLLM report.progress is 0.0 to 1.0)
   const percent = Math.round(report.progress * 100);
   sliderFill.style.width = `${percent}%`;
   loadingPercent.textContent = `${percent}%`;
-  
-  // Update text to show which file is downloading
   loadingLabel.textContent = report.text;
 }
 
@@ -54,6 +74,34 @@ function finishLoading() {
   chatContainer.style.display = 'flex';
   inputText.focus();
   setStatus('online');
+}
+
+function showError(message, attemptedModel) {
+  loadingPercent.textContent = "Error";
+  sliderFill.style.width = "100%";
+  sliderFill.style.background = "#ef4444"; // Red
+  
+  // Specific user guidance
+  if (message.includes("Failed to fetch") || message.includes("NetworkError") || message.includes("fetch")) {
+    loadingLabel.innerHTML = `
+      Could not find model files for <b>${attemptedModel}</b>.<br>
+      <span style="font-size:0.7rem; color:#64748b;">
+        Ensure the Hugging Face repo contains compiled WebGPU files (.wasm, mlc-chat-config.json).
+      </span>
+    `;
+  } else {
+    loadingLabel.innerHTML = message;
+  }
+
+  // Show fallback button
+  errorContainer.style.display = 'block';
+  document.getElementById('errorMsg').textContent = `Failed to load ${attemptedModel}`;
+  
+  // Fallback logic
+  fallbackBtn.onclick = () => {
+    console.log("Switching to fallback model...");
+    initEngine(FALLBACK_MODEL);
+  };
 }
 
 function setStatus(status) {
@@ -102,40 +150,33 @@ function createTypingIndicator() {
   return div;
 }
 
-// --- Markdown Parser (Custom for Code/Math/Gen) ---
+// --- Markdown Parser ---
 
 function parseMarkdown(text) {
-  // 1. Escape HTML
   let escaped = text
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;");
 
-  // 2. Parse Code Blocks (```lang ... ```)
+  // Code Blocks
   escaped = escaped.replace(/```(\w+)?\n([\s\S]*?)```/g, (match, lang, code) => {
     const language = lang || 'code';
     const cleanCode = code.trim();
     
-    // Determine block style based on language or content
-    let styleClass = '';
-    let labelClass = '';
+    let styleClass = 'code-block';
+    let labelClass = 'code-label';
     
-    if (language === 'math') {
-        styleClass = 'math-block';
-        labelClass = 'math-label';
-    } else if (language === 'gen' || language === 'creative') {
-        styleClass = 'gen-block';
-        labelClass = 'gen-label';
-    } else {
-        styleClass = 'code-block';
-        labelClass = 'code-label';
-    }
+    if (language === 'math') { styleClass = 'math-block'; labelClass = 'math-label'; }
+    else if (language === 'gen' || language === 'creative') { styleClass = 'gen-block'; labelClass = 'gen-label'; }
+
+    // Use encodeURIComponent to safely pass code to onclick
+    const codeForAttr = encodeURIComponent(cleanCode);
 
     return `
       <div class="${styleClass}">
         <div class="block-header">
           <span class="block-label ${labelClass}">${language}</span>
-          <button class="copy-btn" onclick="copyCode(this, encodeURIComponent(\`${cleanCode.replace(/`/g, '\\`')}\`))">
+          <button class="copy-btn" onclick="copyCode(this, '${codeForAttr}')">
              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
              <span>Copy</span>
           </button>
@@ -144,15 +185,14 @@ function parseMarkdown(text) {
       </div>`;
   });
 
-  // 3. Line breaks
+  // Line breaks
   escaped = escaped.replace(/\n/g, '<br>');
   
   return escaped;
 }
 
-// --- Helper Functions ---
+// --- Helpers ---
 
-// Expose copy function to window for onclick
 window.copyCode = (btn, encodedText) => {
   const text = decodeURIComponent(encodedText);
   navigator.clipboard.writeText(text).then(() => {
@@ -185,14 +225,14 @@ async function sendMessage() {
 
   clearWelcome();
   
-  // 1. Add User Message
+  // Add User Message
   messagesArea.appendChild(createMessage(text, true));
   chatHistory.push({ role: "user", content: text });
   
   inputText.value = '';
   inputText.style.height = 'auto';
   
-  // 2. Show Loading State
+  // Show Loading State
   setStatus('generating');
   isGenerating = true;
   const typingIndicator = createTypingIndicator();
@@ -200,41 +240,38 @@ async function sendMessage() {
   messagesArea.scrollTop = messagesArea.scrollHeight;
 
   try {
-    // 3. Stream Response
+    // Stream Response
     let fullResponse = "";
     
     const completion = await engine.chat.completions.create({
       messages: chatHistory,
       temperature: 0.7,
-      stream: true, // Enable streaming
+      stream: true,
     });
 
-    // Remove typing indicator once we start receiving data
+    // Remove typing indicator once stream starts
     typingIndicator.remove();
     
-    // Create empty message container for streaming text
+    // Create empty message container for streaming
     const skyMsg = createMessage("", false);
     messagesArea.appendChild(skyMsg);
     const contentWrapper = skyMsg.querySelector('.sky-content');
 
-    // Process stream chunks
     for await (const chunk of completion) {
       const delta = chunk.choices[0].delta.content;
       if (delta) {
         fullResponse += delta;
-        // Update HTML content in real-time
         contentWrapper.innerHTML = parseMarkdown(fullResponse);
         messagesArea.scrollTop = messagesArea.scrollHeight;
       }
     }
 
-    // Save complete response to history
     chatHistory.push({ role: "assistant", content: fullResponse });
 
   } catch (err) {
     console.error(err);
     typingIndicator.remove();
-    const errorMsg = createMessage("Sorry, an error occurred during generation.", false);
+    const errorMsg = createMessage("Error: " + err.message, false);
     messagesArea.appendChild(errorMsg);
   } finally {
     isGenerating = false;
@@ -259,5 +296,6 @@ inputText.addEventListener('keydown', function(e) {
 
 sendBtn.addEventListener('click', sendMessage);
 
-// --- Start Application ---
-initEngine();
+// --- Start ---
+// Attempt to load custom model first
+initEngine(CUSTOM_MODEL);
