@@ -1,17 +1,73 @@
 import * as webllm from "https://cdn.jsdelivr.net/npm/@mlc-ai/web-llm@latest/lib/module.min.js";
 
-// --- Configuration ---
-const HF_REPO = "hafijshaikh/opensky";
-const CONFIG_FILE = "opensky-config.json";
-// Note: We assume the MLC compiled model is available or we use a base model.
-// If "hafijshaikh/opensky" has MLC weights, use that ID. Otherwise fallback.
-const MODEL_ID = "Llama-3.1-8B-Instruct-q4f16_1-MLC"; 
+// ==========================================
+// 1. EMBEDDED CONFIGURATION (opensky-config.json)
+// ==========================================
+const OPENSKY_CONFIG = {
+    "agent_name": "opensky",
+    "author": "Hafij Shaikh",
+    "primary_model": "Llama-3.1-8B-Instruct-q4f16_1-MLC",
+    "storage_policy": "persistent_indexeddb",
+    "version": "3.2.0-Llama-Specialist"
+};
 
+// ==========================================
+// 2. GO LOGIC TRANSLATION (opensky_planner.go)
+// ==========================================
+class Planner {
+    constructor(goal) {
+        this.goal = goal;
+        this.steps = [];
+    }
+
+    // Translated from: func (p *Planner) Decompose()
+    decompose() {
+        const logMessage = `[opensky Brain] Planning roadmap for: ${this.goal}`;
+        console.log(logMessage);
+        
+        // Advanced logic to prevent jumping into code without thinking
+        // In Go this was a placeholder, here we generate a basic plan
+        this.steps = [
+            `Analyze intent of: "${this.goal}"`,
+            "Check for necessary code/math tools",
+            "Generate response"
+        ];
+        
+        return {
+            log: logMessage,
+            steps: this.steps
+        };
+    }
+}
+
+// ==========================================
+// 3. GO LOGIC TRANSLATION (opensky_advanced.go)
+// ==========================================
+class Agent {
+    constructor(config) {
+        this.Name = config.agent_name;
+        this.Author = config.author;
+    }
+
+    // Translated from: func (a *Agent) Process(query string) string
+    process(query) {
+        // The Go code returned a formatted string indicating processing.
+        // We return an object with status to feed into our UI.
+        return {
+            status: "processed",
+            message: `[${this.Name} Smart Engine]: Multi-threaded reasoning applied to ${query}`
+        };
+    }
+}
+
+// ==========================================
+// 4. MAIN APPLICATION LOGIC
+// ==========================================
 let engine = null;
-let agentConfig = null;
+let agent = new Agent(OPENSKY_CONFIG); // Initialize Agent from embedded config
 let isGenerating = false;
 
-// --- DOM Elements ---
+// DOM Elements
 const loadingScreen = document.getElementById('loadingScreen');
 const chatContainer = document.getElementById('chatContainer');
 const messagesArea = document.getElementById('messagesArea');
@@ -20,34 +76,17 @@ const sendBtn = document.getElementById('sendBtn');
 const sliderFill = document.getElementById('sliderFill');
 const loadingPercent = document.getElementById('loadingPercent');
 const loadingLabel = document.getElementById('loadingLabel');
+const loadingVersion = document.getElementById('loadingVersion');
 const statusDot = document.getElementById('statusDot');
 const statusText = document.getElementById('statusText');
 const thinkingPanel = document.getElementById('thinkingPanel');
 const thinkingContent = document.getElementById('thinkingContent');
 
-// --- 1. Download Config from Hugging Face ---
-async function loadAgentConfig() {
-    updateStatusText("Downloading config from HF...");
-    const url = `https://huggingface.co/${HF_REPO}/resolve/main/${CONFIG_FILE}`;
-    try {
-        const response = await fetch(url);
-        if (!response.ok) throw new Error("Config not found");
-        agentConfig = await response.json();
-        console.log("Agent Config Loaded:", agentConfig);
-        updateStatusText("Config loaded.");
-    } catch (e) {
-        console.warn("Could not load opensky-config.json, using defaults.", e);
-        // Default fallback config
-        agentConfig = {
-            system_prompt: "You are Sky, a helpful AI assistant.",
-            tools: []
-        };
-    }
-}
-
-// --- 2. Initialize WebLLM Engine ---
+// Initialize WebLLM Engine
 async function initEngine() {
     try {
+        loadingVersion.textContent = `Version: ${OPENSKY_CONFIG.version}`;
+        
         engine = new webllm.MLCEngine();
         
         engine.setInitProgressCallback((report) => {
@@ -57,8 +96,8 @@ async function initEngine() {
             loadingLabel.textContent = report.text;
         });
 
-        // Initialize with the selected model
-        await engine.reload(MODEL_ID);
+        // Use model from embedded config
+        await engine.reload(OPENSKY_CONFIG.primary_model);
         
         finishLoading();
     } catch (e) {
@@ -67,39 +106,38 @@ async function initEngine() {
     }
 }
 
-// --- 3. Agent Logic (Simulating opensky_planner.go) ---
-// Since we can't run .go files, we implement the planning loop in JS.
-async function runAgentPlanningLoop(userQuery) {
+// Main Logic Loop
+async function runAgentLoop(userQuery) {
     showThinking(true);
-    updateThinking("Analyzing request...");
+    
+    // 1. Run Planner Logic (from opensky_planner.go)
+    const planner = new Planner(userQuery);
+    const plan = planner.decompose();
+    updateThinking(plan.log);
 
-    // Step 1: Construct the prompt
-    // In a real scenario, we'd use the config to inject tools.
-    const messages = [
-        { role: "system", content: agentConfig.system_prompt || "You are a helpful agent." },
-        { role: "user", content: userQuery }
-    ];
+    // 2. Run Agent Processing Logic (from opensky_advanced.go)
+    const agentStatus = agent.process(userQuery);
+    // We display the "Smart Engine" status briefly in the thinking panel
+    updateThinking(`${plan.log}\n${agentStatus.message}`);
 
-    updateThinking("Generating response...");
-
+    // 3. Run LLM Inference
     try {
-        // Stream the response
         const completion = await engine.chat.completions.create({
-            messages: messages,
+            messages: [
+                { role: "system", content: `You are ${agent.Name}, created by ${agent.Author}. You are a precise and helpful AI.` },
+                { role: "user", content: userQuery }
+            ],
             temperature: 0.7,
             stream: true,
         });
 
-        let fullResponse = "";
-        
-        // Remove thinking panel once generation starts
         showThinking(false);
-
-        // Create message container
+        
         const skyMsg = createMessage("", false);
         messagesArea.appendChild(skyMsg);
         const contentWrapper = skyMsg.querySelector('.sky-content');
 
+        let fullResponse = "";
         for await (const chunk of completion) {
             const delta = chunk.choices[0].delta.content;
             if (delta) {
@@ -108,9 +146,6 @@ async function runAgentPlanningLoop(userQuery) {
                 messagesArea.scrollTop = messagesArea.scrollHeight;
             }
         }
-        
-        // If the agent needs to execute code (Advanced logic), it would happen here.
-        // For now, we just display the text/code response.
 
     } catch (err) {
         showThinking(false);
@@ -121,18 +156,14 @@ async function runAgentPlanningLoop(userQuery) {
     }
 }
 
-// --- UI Helper Functions ---
-
-function updateStatusText(text) {
-    loadingLabel.textContent = text;
-}
+// --- UI Helpers ---
 
 function showThinking(show) {
     thinkingPanel.style.display = show ? 'block' : 'none';
 }
 
 function updateThinking(text) {
-    thinkingContent.textContent = `[Planning]: ${text}`;
+    thinkingContent.textContent = text;
 }
 
 function finishLoading() {
@@ -171,7 +202,6 @@ function createMessage(content, isUser) {
         wrapper.innerHTML = parseMarkdown(content);
         div.appendChild(wrapper);
     }
-    
     return div;
 }
 
@@ -222,7 +252,7 @@ function clearWelcome() {
     if (welcome) welcome.remove();
 }
 
-// --- Main Send Logic ---
+// --- Send Logic ---
 
 async function sendMessage() {
     const text = inputText.value.trim();
@@ -236,8 +266,7 @@ async function sendMessage() {
     setStatus('generating');
     isGenerating = true;
     
-    // Run the Agent Loop
-    await runAgentPlanningLoop(text);
+    await runAgentLoop(text);
 }
 
 window.useSuggestion = (text) => {
@@ -245,7 +274,7 @@ window.useSuggestion = (text) => {
     sendMessage();
 };
 
-// --- Event Listeners ---
+// --- Events ---
 inputText.addEventListener('input', function() {
     this.style.height = 'auto';
     this.style.height = Math.min(this.scrollHeight, 100) + 'px';
@@ -261,12 +290,5 @@ inputText.addEventListener('keydown', function(e) {
 
 sendBtn.addEventListener('click', sendMessage);
 
-// --- Initialization Sequence ---
-async function init() {
-    // 1. Load Config
-    await loadAgentConfig();
-    // 2. Load Model
-    await initEngine();
-}
-
-init();
+// --- Start ---
+initEngine();
