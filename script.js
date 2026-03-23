@@ -9,23 +9,25 @@ import * as webllm from "https://esm.run/@mlc-ai/web-llm";
 const OPENSKY_CONFIG = {
     "agent_name": "Opensky",
     "creator": "Hafij Shaikh",
-    "version": "6.1.0" // Optimized for Hardware Limits
+    "version": "6.2.0" 
 };
 
-// System Prompt with Recursive Planning
+// System Prompt for Logic
 const ATLAS_PROMPT = `You are ${OPENSKY_CONFIG.agent_name}, an advanced autonomous agent created by ${OPENSKY_CONFIG.creator}.
 1. Recursive Planning: State your plan, critique it, and adjust.
 2. Reasoning Loop: Use Thought-Action-Observation format.
 3. State Management: Track progress and obstacles.`;
 
-// Artist Prompt specialized for SVG Generation
+// System Prompt for Art (No Apologies, just do it)
 const ARTIST_PROMPT = `You are the Creative Module of ${OPENSKY_CONFIG.agent_name}.
 You are an expert SVG artist.
-When asked to 'draw', 'generate an image', or 'create a picture', you MUST output valid SVG code inside a code block. 
-Create detailed, artistic SVGs.
-If the user uploads an image for reference, apologize that you cannot see it (hardware limit), but generate an SVG based on their text description.`;
+RULES:
+1. If the user asks to 'draw', 'generate', or 'create' an image, you MUST output valid SVG code inside a code block.
+2. If the user uploads an image reference, DO NOT apologize. You cannot see the image directly, but you must creatively interpret the user's text description to generate an SVG that matches their request.
+3. Never say "I cannot see". Instead, say "I am creating an artistic representation based on your description."
+4. Keep SVG code clean and viewable.`;
 
-// Models selected for Hardware Compatibility (Workgroup 256)
+// Compatible Models
 const MODELS = {
   atlas: {
     id: "Qwen2.5-1.5B-Instruct-q4f16_1-MLC",
@@ -34,8 +36,6 @@ const MODELS = {
     systemPrompt: ATLAS_PROMPT
   },
   artist: {
-    // Using Phi-3.5-mini as the Artist. It is smart enough to generate SVG code (images)
-    // without crashing the GPU like the Vision model did.
     id: "Phi-3.5-mini-instruct-q4f16_1-MLC", 
     name: "Artist Module",
     role: "Creative (SVG)",
@@ -64,7 +64,7 @@ const removeImageBtn = document.getElementById('removeImageBtn');
 
 let engines = {}; 
 let isGenerating = false;
-let currentImageBase64 = null;
+let currentImageBase64 = null; // Stores image data
 
 // ==========================================
 // DEBUG HELPER
@@ -83,7 +83,6 @@ function showError(title, err) {
 async function init() {
     try {
         loadingLabel.textContent = "Checking WebGPU...";
-        
         if (!navigator.gpu) {
             throw new Error("WebGPU not supported. Please use Chrome v113+.");
         }
@@ -99,13 +98,11 @@ async function init() {
           </div>
         `;
 
-        // Load Atlas
         loadingLabel.textContent = "Loading Atlas Core (1/2)...";
         engines.atlas = await webllm.CreateMLCEngine(MODELS.atlas.id, {
             initProgressCallback: (report) => updateModelUI('card-atlas', report, 0)
         });
 
-        // Load Artist
         loadingLabel.textContent = "Loading Artist Module (2/2)...";
         engines.artist = await webllm.CreateMLCEngine(MODELS.artist.id, {
             initProgressCallback: (report) => updateModelUI('card-artist', report, 50)
@@ -128,7 +125,6 @@ function updateModelUI(cardId, report, basePercent) {
   const card = document.getElementById(cardId);
   if (!card) return;
   const percent = Math.round(report.progress * 100);
-  
   card.querySelector('.model-card-desc').textContent = report.text;
   sliderFill.style.width = `${basePercent + Math.round(percent / 2)}%`;
   loadingPercent.textContent = `${basePercent + Math.round(percent / 2)}%`;
@@ -140,23 +136,21 @@ function updateModelUI(cardId, report, basePercent) {
 function routeRequest(query, hasImage) {
   const q = query.toLowerCase();
   
-  // If user wants to create/draw -> Use Artist (SVG Generation)
-  if (["image", "draw", "picture", "art", "paint", "svg", "generate"].some(k => q.includes(k))) {
-    return { engine: engines.artist, config: MODELS.artist };
-  }
-  
-  // If user uploaded an image -> Use Artist (Creative transformation)
-  // Note: The model cannot 'see' the image, but we route it here so it can 
-  // generate a 'replacement' SVG based on the user's text description.
-  if (hasImage) {
+  // Route to Artist if image keywords or image upload exists
+  if (hasImage || ["image", "draw", "picture", "art", "paint", "svg", "generate"].some(k => q.includes(k))) {
     return { engine: engines.artist, config: MODELS.artist };
   }
 
-  // Default to Atlas for Logic
   return { engine: engines.atlas, config: MODELS.atlas };
 }
 
-async function runAgentLoop(query) {
+// Function to update the Reasoning Accordion with "State Log"
+function updateReasoning(accordionBody, text) {
+   accordionBody.textContent = text;
+}
+
+async function runAgentLoop(query, hasImage) {
+  // Create Reasoning Accordion
   const accordion = document.createElement('div');
   accordion.className = 'reasoning-accordion open';
   
@@ -167,10 +161,14 @@ async function runAgentLoop(query) {
 
   const accordionBody = document.createElement('div');
   accordionBody.className = 'reasoning-body';
-  accordionBody.textContent = "Initializing Thought Process...";
-  
   accordion.appendChild(accordionBtn);
   accordion.appendChild(accordionBody);
+
+  // Initial State Log
+  let stateLog = `> Mission Received: "${query}"\n`;
+  if(hasImage) stateLog += `> Context: Image Reference Detected\n`;
+  
+  updateReasoning(accordionBody, stateLog + "> Analyzing request...");
   
   const msgDiv = document.createElement('div');
   msgDiv.className = 'message assistant';
@@ -184,26 +182,31 @@ async function runAgentLoop(query) {
   messagesArea.appendChild(msgDiv);
   scrollToBottom();
 
-  const { engine, config } = routeRequest(query, !!currentImageBase64);
+  const { engine, config } = routeRequest(query, hasImage);
   
+  // Update Log: Routing
+  updateReasoning(accordionBody, stateLog + `> Routing to: ${config.name}\n> Initializing module...`);
+  stateLog += `> Routing to: ${config.name}\n`;
+
   try {
-    // Prepare messages
     const messages = [
       { role: "system", content: config.systemPrompt }
     ];
 
-    // Handle Image Upload Context
-    if (currentImageBase64) {
-      // Since the model is Text-Only (to fix your crash), we inject a system hint
-      // to inform the model about the user's intent.
-      messages.push({ 
-        role: "user", 
-        content: `The user uploaded an image (which I cannot see due to hardware constraints) and said: "${query}". 
-        Please generate an SVG image that matches their description or request.` 
-      });
+    // Handle Image Context
+    if (hasImage) {
+        // We don't pass the image pixels because the model will crash (Workgroup 256).
+        // We pass a modified prompt telling it to do its best.
+        messages.push({ 
+            role: "user", 
+            content: `I have uploaded an image reference. I cannot show you the pixels due to device constraints, but please generate a creative SVG or text response based on this description: "${query}". Do not apologize.` 
+        });
     } else {
-      messages.push({ role: "user", content: query });
+        messages.push({ role: "user", content: query });
     }
+
+    // Update Log: Processing
+    updateReasoning(accordionBody, stateLog + "> Generating response...");
 
     const completion = await engine.chat.completions.create({
       messages: messages,
@@ -218,21 +221,26 @@ async function runAgentLoop(query) {
       const delta = chunk.choices[0].delta.content;
       if (delta) {
         fullResponse += delta;
-        if (accordion.classList.contains('open') && fullResponse.length > 100) {
+        
+        // Heuristic: If response starts, collapse reasoning to keep UI clean
+        if (accordion.classList.contains('open') && fullResponse.length > 50) {
              accordion.classList.remove('open');
              accordionBtn.querySelector('span').textContent = "✨ View Reasoning Log";
         }
+
         msgDiv.style.display = 'flex';
-        contentWrapper.innerHTML = parseContent(fullResponse, accordionBody);
+        contentWrapper.innerHTML = parseContent(fullResponse);
         scrollToBottom();
       }
     }
     
-    accordionBody.textContent = "Reasoning complete.";
+    // Final Log Update
+    updateReasoning(accordionBody, stateLog + "> Task Completed.");
     
   } catch (e) {
     contentWrapper.innerHTML = `<span style="color:red">Error: ${e.message}</span>`;
     msgDiv.style.display = 'flex';
+    updateReasoning(accordionBody, stateLog + `> Error: ${e.message}`);
   } finally {
     isGenerating = false;
     sendBtn.classList.remove('stop-btn');
@@ -243,16 +251,15 @@ async function runAgentLoop(query) {
 // ==========================================
 // 6. CONTENT PARSING
 // ==========================================
-function parseContent(text, accordionElement) {
+function parseContent(text) {
   if (!text) return "";
-  
   let escaped = text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
-  // Handle Code Blocks (and SVG)
+  // Code Blocks & SVG
   escaped = escaped.replace(/```(\w+)?\n([\s\S]*?)```/g, (match, lang, code) => {
       const decodedCode = code.replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">");
       
-      // SVG Detection -> Render as Image
+      // SVG -> Image
       if (lang === 'svg' || decodedCode.trim().startsWith('<svg')) {
           return `
             <div class="generated-image-container">
@@ -335,8 +342,10 @@ async function handleAction() {
   }
 
   const text = inputText.value.trim();
+  // Allow send if text OR image exists
   if (!text && !currentImageBase64) return;
 
+  // --- 1. CREATE USER MESSAGE ---
   const userMsg = document.createElement('div');
   userMsg.className = 'message user';
   
@@ -349,18 +358,23 @@ async function handleAction() {
   userMsg.innerHTML = userBubbleHTML;
   messagesArea.appendChild(userMsg);
   
+  // --- 2. CLEAR INPUT & PREVIEW IMMEDIATELY ---
+  const hasImage = !!currentImageBase64; // Save state before clearing
   inputText.value = '';
   inputText.style.height = 'auto';
   
+  // Clear Image Preview UI
+  currentImageBase64 = null;
+  imagePreviewContainer.classList.remove('active');
+  imageInput.value = '';
+
+  // --- 3. START GENERATION ---
   isGenerating = true;
   sendBtn.classList.add('stop-btn');
   sendBtn.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"></rect></svg>`;
   
   scrollToBottom();
-  await runAgentLoop(text || "Create an artistic representation of this.");
-  
-  currentImageBase64 = null;
-  imagePreviewContainer.classList.remove('active');
+  await runAgentLoop(text || "Create something based on this reference.", hasImage);
 }
 
 inputText.addEventListener('input', function() { 
