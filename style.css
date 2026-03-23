@@ -9,7 +9,6 @@
   --border: #e5e7eb;
   --radius: 12px;
   --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
-  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -34,10 +33,7 @@ body {
   transition: opacity 0.5s ease, visibility 0.5s ease;
 }
 
-.loading-screen.hidden {
-  opacity: 0;
-  visibility: hidden;
-}
+.loading-screen.hidden { opacity: 0; visibility: hidden; }
 
 .loader-content {
   width: 100%;
@@ -145,10 +141,7 @@ body {
   border-bottom: 1px solid var(--border);
 }
 
-.app-title {
-  font-weight: 700;
-  font-size: 1.1rem;
-}
+.app-title { font-weight: 700; font-size: 1.1rem; }
 
 .app-subtitle {
   font-size: 0.7rem;
@@ -173,10 +166,7 @@ body {
   background: #10b981;
 }
 
-.status-dot.loading {
-  background: #f59e0b;
-  animation: pulse 1.5s infinite;
-}
+.status-dot.loading { background: #f59e0b; animation: pulse 1.5s infinite; }
 
 .status-text {
   font-size: 0.75rem;
@@ -198,14 +188,6 @@ body {
   gap: 1rem;
 }
 
-.welcome-message {
-  text-align: center;
-  margin-top: 4rem;
-  color: var(--text-muted);
-}
-
-.welcome-message h2 { color: var(--text-main); margin-bottom: 0.5rem; }
-
 /* --- Messages --- */
 .message {
   display: flex;
@@ -219,9 +201,7 @@ body {
   to { opacity: 1; transform: translateY(0); }
 }
 
-.message.user {
-  align-items: flex-end;
-}
+.message.user { align-items: flex-end; }
 
 .user-bubble {
   background: var(--primary);
@@ -233,9 +213,7 @@ body {
   line-height: 1.5;
 }
 
-.message.assistant {
-  align-items: flex-start;
-}
+.message.assistant { align-items: flex-start; }
 
 .assistant-content {
   background: var(--bg-card);
@@ -284,9 +262,7 @@ body {
   padding-top: 0.5rem;
 }
 
-.thoughts-accordion.open .thoughts-body {
-  display: block;
-}
+.thoughts-accordion.open .thoughts-body { display: block; }
 
 /* --- Code Blocks --- */
 .code-block {
@@ -314,7 +290,6 @@ body {
   font-size: 0.65rem;
   padding: 2px 6px;
   cursor: pointer;
-  transition: all 0.2s;
 }
 
 .copy-btn:hover { background: var(--primary); color: white; border-color: var(--primary); }
@@ -343,9 +318,7 @@ body {
   transition: border-color 0.2s;
 }
 
-.input-wrapper:focus-within {
-  border-color: var(--primary);
-}
+.input-wrapper:focus-within { border-color: var(--primary); }
 
 .input-field {
   flex: 1;
@@ -370,12 +343,8 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: transform 0.1s;
 }
 
 .send-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 .send-btn:not(:disabled):active { transform: scale(0.95); }
-
-.stop-btn {
-  background: #ef4444;
-}
+.stop-btn { background: #ef4444; }
