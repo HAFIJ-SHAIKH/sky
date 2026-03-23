@@ -8,59 +8,76 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 </head>
 <body>
-  <div class="bg-pattern"></div>
 
   <!-- Loading Screen -->
   <div class="loading-screen" id="loadingScreen">
-    <div class="loading-title">Opensky</div>
-    <div class="loading-bar-container">
-      <!-- This label will act as our Log -->
-      <div class="loading-label" id="loadingLabel">Initializing Script...</div>
-      <div class="slider-track">
-        <div class="slider-fill" id="sliderFill"></div>
+    <div class="loader-content">
+      <div class="logo-mark">
+        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+          <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
+        </svg>
       </div>
-      <div class="loading-percent" id="loadingPercent">0%</div>
+      <h1 class="loader-title">Opensky</h1>
+      <p class="loader-status" id="loadingLabel">Initializing Systems...</p>
+      
+      <div class="progress-container">
+        <div class="progress-bar" id="sliderFill"></div>
+      </div>
+      <div class="progress-stats">
+        <span id="loadingPercent">0%</span>
+      </div>
+      
+      <!-- Model Cards Container -->
+      <div id="modelStatusContainer" class="model-status-container"></div>
     </div>
   </div>
 
-  <!-- Main UI -->
-  <div class="chat-container" id="chatContainer">
-    <header class="chat-header">
-      <div class="brand-info">
-        <span class="brand-name">Opensky</span>
-        <span class="brand-author">by Hafij Shaikh</span>
+  <!-- Main Application -->
+  <div class="app-container" id="chatContainer">
+    
+    <!-- Header -->
+    <header class="app-header">
+      <div class="header-left">
+        <span class="app-title">Opensky</span>
+        <span class="app-subtitle">Autonomous Agent</span>
       </div>
-      <div class="status-badge">
-        <div class="status-dot" id="statusDot"></div>
-        <span class="status-text" id="statusText">Initializing...</span>
+      <div class="header-right">
+        <div class="status-indicator" id="statusIndicator">
+          <span class="status-dot"></span>
+          <span class="status-text" id="statusText">Ready</span>
+        </div>
       </div>
     </header>
 
-    <div class="thinking-panel" id="thinkingPanel" style="display: none;">
-      <div class="thinking-header">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
-        <span>Agent Reasoning</span>
+    <!-- Chat Area -->
+    <main class="chat-area" id="messagesArea">
+      <!-- Welcome Message -->
+      <div class="welcome-message">
+        <h2>Hello, I am Opensky.</h2>
+        <p>I use a Thought-Action-Observation loop to assist you. Ask me anything.</p>
       </div>
-      <div class="thinking-content" id="thinkingContent"></div>
-    </div>
+    </main>
 
-    <div class="messages-area" id="messagesArea"></div>
-
-    <div class="input-area">
-      <div class="input-row">
-        <div class="input-box">
-          <textarea class="input-text" id="inputText" placeholder="Ask Opensky..." rows="1"></textarea>
-        </div>
-        <button class="send-button" id="sendBtn" disabled aria-label="Send">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
-            <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
+    <!-- Input Area -->
+    <footer class="input-area">
+      <div class="input-wrapper">
+        <textarea 
+          id="inputText" 
+          class="input-field" 
+          placeholder="Ask Opensky..." 
+          rows="1"
+        ></textarea>
+        <button id="sendBtn" class="send-btn" disabled>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="22" y1="2" x2="11" y2="13"></line>
+            <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
           </svg>
         </button>
       </div>
-    </div>
+    </footer>
   </div>
 
-  <!-- Main Script -->
+  <!-- Script -->
   <script type="module" src="script.js"></script>
 </body>
 </html>
