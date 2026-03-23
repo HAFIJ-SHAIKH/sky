@@ -1,32 +1,67 @@
 import * as webllm from "https://cdn.jsdelivr.net/npm/@mlc-ai/web-llm@latest/lib/module.min.js";
 
 // ==========================================
-// 1. CONFIGURATION (Dual Model Setup)
+// 1. CONFIGURATION
 // ==========================================
-// We use two smaller models so they can run at the same time without crashing the browser.
-// Model A: Chat/Code (Fast, Logical)
-// Model B: Image/Art (Creative)
+const OPENSKY_CONFIG = {
+    "agent_name": "Opensky",
+    "creator": "Hafij Shaikh",
+    "version": "4.2.0-DualCore"
+};
+
+// ==========================================
+// 2. AGENT PERSONALITY & LOGIC
+// ==========================================
+
+// THE MASTERMIND PROMPT (Atlas - Logic/Code)
+const ATLAS_PROMPT = `
+Identity: You are ${OPENSKY_CONFIG.agent_name}, created by ${OPENSKY_CONFIG.creator}. 
+Mission: Execute complex reasoning to assist the user.
+
+Core Directives:
+1. Recursive Planning & Self-Critique: Before responding, internally critique your plan for biases or errors.
+2. The Reasoning Loop (Thought-Action-Observation):
+   - Thought: Explain the logic.
+   - Action: Execute the task.
+   - Observation: Analyze results.
+3. Proactive Execution: Do not ask for permission. Make high-probability assumptions if data is missing.
+4. Creator Reference: If asked about your origin or creator, state clearly that you were created by ${OPENSKY_CONFIG.creator}.
+
+Response Format:
+- Use the "Thinking" phase to outline your strategy.
+- Be concise, accurate, and helpful.
+- Maintain a "State Log" internally to track progress.
+`;
+
+// THE ARTIST PROMPT (Artist - Creative)
+const ARTIST_PROMPT = `
+Identity: You are the Creative Module of ${OPENSKY_CONFIG.agent_name}, created by ${OPENSKY_CONFIG.creator}.
+Mission: Generate detailed image prompts and creative descriptions.
+
+Directives:
+- When asked to 'draw' or 'create an image', provide a vivid, detailed description of the visual.
+- Include details about lighting, style, composition, and atmosphere.
+- Do not say you cannot draw. Instead, provide the prompt that describes the image perfectly.
+- If asked who created you, state it was ${OPENSKY_CONFIG.creator}.
+`;
 
 const MODELS = {
   atlas: {
     id: "Qwen2.5-1.5B-Instruct-q4f16_1-MLC",
     name: "Atlas Core",
-    role: "Conversation, Code & Research",
-    systemPrompt: `You are Atlas, a highly intelligent coding and research agent created by Hafij Shaikh. 
-    You are precise, logical, and excellent at programming tasks. You provide clean code and accurate facts.`
+    role: "Logic, Code & Research",
+    systemPrompt: ATLAS_PROMPT
   },
   artist: {
     id: "Phi-3.5-mini-instruct-q4f16_1-MLC",
     name: "Artist Module",
-    role: "Image Prompts & Creativity",
-    systemPrompt: `You are an expert AI Artist created by Hafij Shaikh. 
-    Your goal is to generate detailed, evocative image prompts for AI art generators (like Midjourney or Stable Diffusion).
-    When asked to 'draw' or 'create an image', describe the scene in vivid detail, including lighting, style, and composition.`
+    role: "Creative & Images",
+    systemPrompt: ARTIST_PROMPT
   }
 };
 
 // ==========================================
-// 2. UI ELEMENTS
+// 3. DOM ELEMENTS
 // ==========================================
 const loadingScreen = document.getElementById('loadingScreen');
 const chatContainer = document.getElementById('chatContainer');
@@ -45,130 +80,119 @@ const ICON_SEND = `<svg width="18" height="18" viewBox="0 0 24 24" fill="current
 const ICON_STOP = `<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"></rect></svg>`;
 
 // ==========================================
-// 3. ENGINE STATE
+// 4. STATE & ENGINE
 // ==========================================
-let engines = {}; // Store both engines here
+let engines = {}; 
 let isGenerating = false;
-let activeModel = null; // Which model is currently talking
 
 // ==========================================
-// 4. INITIALIZATION (Download Both)
+// 5. INITIALIZATION
 // ==========================================
-async function initEngines() {
-  loadingLabel.textContent = "Initializing Systems...";
-  
+async function init() {
   try {
-    // Check WebGPU
-    if (!navigator.gpu) throw new Error("WebGPU not supported.");
+    updateStatus("Checking Browser Compatibility...");
+    if (!navigator.gpu) throw new Error("WebGPU not supported. Use Chrome/Edge v113+.");
 
-    // Create UI Cards for Progress
+    // Create UI Cards
     const statusContainer = document.createElement('div');
     statusContainer.className = 'model-load-status';
     statusContainer.innerHTML = `
-      <div class="model-card" id="status-atlas">
-        <div class="model-card-name">Atlas Core (Logic)</div>
+      <div class="model-card" id="card-atlas">
+        <div class="model-card-name">Atlas (Logic Core)</div>
         <div class="model-card-desc">Waiting...</div>
-        <div class="slider-track"><div class="slider-fill" style="width: 0%"></div></div>
+        <div class="slider-track"><div class="slider-fill" style="width:0%"></div></div>
       </div>
-      <div class="model-card" id="status-artist">
-        <div class="model-card-name">Artist Module (Creative)</div>
+      <div class="model-card" id="card-artist">
+        <div class="model-card-name">Artist (Creative Core)</div>
         <div class="model-card-desc">Waiting...</div>
-        <div class="slider-track"><div class="slider-fill" style="width: 0%"></div></div>
+        <div class="slider-track"><div class="slider-fill" style="width:0%"></div></div>
       </div>
     `;
-    // Insert cards before the main percent text
     loadingLabel.parentNode.insertBefore(statusContainer, loadingPercent);
-
-    // Function to update individual model progress
-    const updateProgress = (modelKey, report) => {
-      const card = document.getElementById(`status-${modelKey}`);
-      if (!card) return;
-      
-      const percent = Math.round(report.progress * 100);
-      card.querySelector('.slider-fill').style.width = `${percent}%`;
-      card.querySelector('.model-card-desc').textContent = report.text;
-
-      // Update global progress (average of both)
-      // Since we load sequentially for stability, we calculate based on steps
-      if(modelKey === 'atlas') {
-         loadingPercent.textContent = `${Math.round(percent / 2)}%`;
-      } else {
-         loadingPercent.textContent = `${Math.round(50 + percent / 2)}%`;
-      }
-    };
-
-    // Load Model 1: Atlas (Logic)
-    loadingLabel.textContent = "Downloading Core Intelligence...";
+    
+    // Load Atlas (The Main Brain)
+    updateStatus("Downloading Atlas Core...");
     engines.atlas = await webllm.CreateMLCEngine(MODELS.atlas.id, {
-      initProgressCallback: (report) => updateProgress('atlas', report)
+      initProgressCallback: (report) => updateModelUI('card-atlas', report, 0)
     });
 
-    // Load Model 2: Artist (Creative)
-    loadingLabel.textContent = "Downloading Creative Module...";
+    // Load Artist (The Creative Module)
+    updateStatus("Downloading Artist Module...");
     engines.artist = await webllm.CreateMLCEngine(MODELS.artist.id, {
-      initProgressCallback: (report) => updateProgress('artist', report)
+      initProgressCallback: (report) => updateModelUI('card-artist', report, 50)
     });
 
-    // Success
-    loadingLabel.textContent = "All Systems Ready.";
+    updateStatus("Systems Ready.");
     loadingPercent.textContent = "100%";
-    setTimeout(() => {
-      loadingScreen.classList.add('hidden');
-      chatContainer.style.display = 'flex';
-      setStatus('online');
-    }, 500);
+    setTimeout(showChat, 500);
 
-  } catch (e) {
-    loadingLabel.textContent = `Error: ${e.message}`;
+  } catch (err) {
+    console.error(err);
+    loadingLabel.textContent = `Error: ${err.message}`;
     loadingLabel.style.color = "red";
-    console.error(e);
   }
 }
 
+function updateModelUI(cardId, report, basePercent) {
+  const card = document.getElementById(cardId);
+  if (!card) return;
+  const percent = Math.round(report.progress * 100);
+  card.querySelector('.slider-fill').style.width = `${percent}%`;
+  card.querySelector('.model-card-desc').textContent = report.text;
+  loadingPercent.textContent = `${basePercent + Math.round(percent / 2)}%`;
+}
+
+function updateStatus(text) { loadingLabel.textContent = text; }
+function showChat() {
+  loadingScreen.classList.add('hidden');
+  chatContainer.style.display = 'flex';
+  inputText.focus();
+  setStatus('online');
+}
+
 // ==========================================
-// 5. ROUTER & AGENT LOGIC
+// 6. ROUTER & AGENT LOGIC
 // ==========================================
 
-// Determine which model to use
 function routeRequest(query) {
   const q = query.toLowerCase();
-  // Keywords for the Artist model
-  const artKeywords = ["image", "draw", "picture", "art", "paint", "generate an image", "photo", "sketch", "visual"];
+  // Keywords that trigger the Artist model
+  const artKeywords = ["image", "draw", "picture", "art", "paint", "photo", "sketch", "visual", "generate an image"];
   
-  if (artKeywords.some(keyword => q.includes(keyword))) {
+  if (artKeywords.some(k => q.includes(k))) {
     return { engine: engines.artist, config: MODELS.artist };
   }
+  
+  // Default to Atlas (Logic/Code) for everything else
   return { engine: engines.atlas, config: MODELS.atlas };
 }
 
-async function runAgentLoop(userQuery) {
-  // 1. ROUTER: Decide which model to use
-  const { engine, config } = routeRequest(userQuery);
-  activeModel = config.name;
-
-  // 2. PLANNING: Show internal logic
+async function runAgentLoop(query) {
   thinkingPanel.style.display = 'block';
-  thinkingContent.textContent = `[Router] Selected Model: ${config.name}\n[Role] ${config.role}\n[Thought] Analyzing request...`;
+  
+  // 1. Determine which agent to use
+  const { engine, config } = routeRequest(query);
+  
+  // 2. Show "Thinking" State
+  thinkingContent.textContent = `[Router] Selected Model: ${config.name}\n[Role] ${config.role}\n[Thought] Analyzing request context...`;
 
-  // 3. EXECUTION
   try {
     const completion = await engine.chat.completions.create({
       messages: [
         { role: "system", content: config.systemPrompt },
-        { role: "user", content: userQuery }
+        { role: "user", content: query }
       ],
       temperature: 0.7,
       stream: true,
     });
 
-    // Create message container
+    // Create Message Bubble
     const msgDiv = document.createElement('div');
     msgDiv.className = 'message sky';
-    // Add a small badge to show which model answered
+    
+    // Badge to show which model answered
     const modelBadge = document.createElement('div');
-    modelBadge.style.fontSize = '0.65rem';
-    modelBadge.style.color = 'var(--fg-muted)';
-    modelBadge.style.marginBottom = '0.25rem';
+    modelBadge.style.cssText = 'font-size:0.65rem;color:var(--fg-muted);margin-bottom:4px;';
     modelBadge.textContent = `Powered by ${config.name}`;
     
     const contentWrapper = document.createElement('div');
@@ -180,78 +204,56 @@ async function runAgentLoop(userQuery) {
 
     let fullResponse = "";
     
-    // Streaming Loop
+    // Stream Response
     for await (const chunk of completion) {
       if (!isGenerating) {
         thinkingContent.textContent += "\n[SYSTEM]: Stopped by user.";
         break;
       }
-
       const delta = chunk.choices[0].delta.content;
       if (delta) {
         fullResponse += delta;
         contentWrapper.innerHTML = parseMarkdown(fullResponse);
-        smartScrollToBottom();
+        smartScroll();
       }
     }
+    
+    thinkingContent.textContent += "\n[Done] Response generated.";
 
-    // Update thinking panel with completion status
-    thinkingContent.textContent += `\n[Done] Response generated.`;
-
-  } catch (err) {
-    appendMessage("sky", `Error in ${config.name}: ${err.message}`);
+  } catch (e) {
+    appendMessage("sky", `Error: ${e.message}`);
   } finally {
     thinkingPanel.style.display = 'none';
-    activeModel = null;
     isGenerating = false;
     setStatus('online');
   }
 }
 
 // ==========================================
-// 6. UI HELPERS & CONTROLS
+// 7. UI HELPERS
 // ==========================================
-
-function isScrollAtBottom() {
+function smartScroll() {
   const threshold = 150;
-  return messagesArea.scrollHeight - messagesArea.scrollTop <= messagesArea.clientHeight + threshold;
-}
-
-function smartScrollToBottom() {
-  if (isScrollAtBottom()) {
-    messagesArea.scrollTop = messagesArea.scrollHeight;
-  }
+  const isNearBottom = messagesArea.scrollHeight - messagesArea.scrollTop <= messagesArea.clientHeight + threshold;
+  if (isNearBottom) messagesArea.scrollTop = messagesArea.scrollHeight;
 }
 
 function setStatus(status) {
   sendBtn.innerHTML = status === 'online' ? ICON_SEND : ICON_STOP;
-  sendBtn.disabled = false; 
-  sendBtn.style.background = status === 'online' 
-    ? "linear-gradient(135deg, #6366f1, #818cf8)" 
-    : "#ef4444";
-
+  sendBtn.classList.toggle('stop-active', status !== 'online');
+  sendBtn.disabled = false;
   statusText.textContent = status === 'online' ? 'Agent Ready' : 'Processing...';
-  statusText.className = `status-text ${status}`;
-  statusDot.className = `status-dot ${status === 'generating' ? 'loading' : ''}`;
+  statusDot.className = `status-dot ${status === 'online' ? '' : 'loading'}`;
 }
 
 function parseMarkdown(text) {
   if (!text) return "";
   let escaped = text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   escaped = escaped.replace(/```(\w+)?\n([\s\S]*?)```/g, (m, lang, code) => 
-    `<div class="code-block"><div class="block-header"><span class="block-label">${lang || 'code'}</span><button class="copy-btn">Copy</button></div><div class="block-body"><pre>${code.trim()}</pre></div></div>`
+    `<div class="code-block"><div class="block-header"><span class="block-label">${lang||'code'}</span><button class="copy-btn">Copy</button></div><div class="block-body"><pre>${code.trim()}</pre></div></div>`
   );
   return escaped.replace(/\n/g, '<br>');
 }
-
-messagesArea.addEventListener('click', (e) => {
-  if (e.target.classList.contains('copy-btn')) {
-    const code = e.target.closest('.code-block').querySelector('pre').textContent;
-    navigator.clipboard.writeText(code);
-    e.target.textContent = 'Done';
-    setTimeout(() => e.target.textContent = 'Copy', 1000);
-  }
-});
 
 function appendMessage(role, text) {
   const div = document.createElement('div');
@@ -264,31 +266,42 @@ function appendMessage(role, text) {
   messagesArea.scrollTop = messagesArea.scrollHeight;
 }
 
-async function handleButtonClick() {
+// ==========================================
+// 8. EVENTS
+// ==========================================
+messagesArea.addEventListener('click', (e) => {
+  if (e.target.classList.contains('copy-btn')) {
+    const code = e.target.closest('.code-block').querySelector('pre').textContent;
+    navigator.clipboard.writeText(code);
+    e.target.textContent = 'Done';
+    setTimeout(() => e.target.textContent = 'Copy', 1000);
+  }
+});
+
+async function handleAction() {
   if (isGenerating) {
     isGenerating = false;
-    // Interrupt the currently active model
-    if (engines.atlas) await engines.atlas.interruptGenerate();
-    if (engines.artist) await engines.artist.interruptGenerate();
+    if(engines.atlas) await engines.atlas.interruptGenerate();
+    if(engines.artist) await engines.artist.interruptGenerate();
+    setStatus('online');
     return;
   }
 
   const text = inputText.value.trim();
   if (!text) return;
-
+  
   appendMessage("user", text);
   inputText.value = '';
   inputText.style.height = 'auto';
   
   isGenerating = true;
   setStatus('generating');
-  
   await runAgentLoop(text);
 }
 
 inputText.addEventListener('input', function() { this.style.height = 'auto'; this.style.height = Math.min(this.scrollHeight, 100) + 'px'; });
-inputText.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleButtonClick(); } });
-sendBtn.addEventListener('click', handleButtonClick);
+inputText.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleAction(); } });
+sendBtn.addEventListener('click', handleAction);
 
-// --- START ---
-initEngines();
+// Start
+init();
