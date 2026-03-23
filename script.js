@@ -1,122 +1,124 @@
+// CORRECT URL: Changed 'module.min.js' to 'index.min.js'
+import * as webllm from "https://cdn.jsdelivr.net/npm/@mlc-ai/web-llm@latest/lib/index.min.js";
+
 // ==========================================
-// 1. GLOBALS & UI HELPERS
+// 1. CONFIGURATION
+// ==========================================
+const OPENSKY_CONFIG = {
+    "agent_name": "Opensky",
+    "author": "Hafij Shaikh",
+    // Smaller model for better mobile/download success
+    "primary_model": "Qwen2.5-1.5B-Instruct-q4f16_1-MLC", 
+    "version": "3.2.2"
+};
+
+// ==========================================
+// 2. UI CONTROLLER
+// ==========================================
+const UI = {
+    loadingScreen: document.getElementById('loadingScreen'),
+    chatContainer: document.getElementById('chatContainer'),
+    messagesArea: document.getElementById('messagesArea'),
+    inputText: document.getElementById('inputText'),
+    sendBtn: document.getElementById('sendBtn'),
+    sliderFill: document.getElementById('sliderFill'),
+    loadingPercent: document.getElementById('loadingPercent'),
+    loadingLabel: document.getElementById('loadingLabel'),
+    statusDot: document.getElementById('statusDot'),
+    statusText: document.getElementById('statusText'),
+    thinkingPanel: document.getElementById('thinkingPanel'),
+    thinkingContent: document.getElementById('thinkingContent'),
+
+    setStatus(text, percent = null) {
+        this.loadingLabel.textContent = text;
+        console.log(`[Status] ${text}`);
+        if (percent !== null) {
+            this.loadingPercent.textContent = `${percent}%`;
+            this.sliderFill.style.width = `${percent}%`;
+        }
+    },
+    
+    showError(msg) {
+        this.setStatus(`❌ Error: ${msg}`, 0);
+        this.loadingLabel.style.color = "red";
+        this.sliderFill.style.backgroundColor = "red";
+    }
+};
+
+// ==========================================
+// 3. CORE LOGIC
 // ==========================================
 let engine = null;
 let isGenerating = false;
 
-// UI Elements
-const loadingScreen = document.getElementById('loadingScreen');
-const chatContainer = document.getElementById('chatContainer');
-const messagesArea = document.getElementById('messagesArea');
-const inputText = document.getElementById('inputText');
-const sendBtn = document.getElementById('sendBtn');
-const sliderFill = document.getElementById('sliderFill');
-const loadingPercent = document.getElementById('loadingPercent');
-const loadingLabel = document.getElementById('loadingLabel');
-const statusDot = document.getElementById('statusDot');
-const statusText = document.getElementById('statusText');
-const thinkingPanel = document.getElementById('thinkingPanel');
-const thinkingContent = document.getElementById('thinkingContent');
-
-// Helper to safely update Loading UI
-function setStatusText(text, percent = null) {
-    if (loadingLabel) loadingLabel.textContent = text;
-    if (percent !== null) {
-        if (loadingPercent) loadingPercent.textContent = `${percent}%`;
-        if (sliderFill) sliderFill.style.width = `${percent}%`;
-    }
-    console.log(`[Status] ${text}`);
-}
-
-// ==========================================
-// 2. DYNAMIC IMPORT (CATCHES CDN FAILURES)
-// ==========================================
-async function loadDependencies() {
-    try {
-        setStatusText("Connecting to AI Network...", 5);
-        
-        // Dynamic import allows us to catch network errors
-        const webllm = await import("https://cdn.jsdelivr.net/npm/@mlc-ai/web-llm@latest/lib/module.min.js");
-        
-        setStatusText("AI Module Loaded.", 10);
-        return webllm;
-    } catch (err) {
-        setStatusText("❌ Network Error: Could not load AI engine.", 0);
-        console.error(err);
-        throw err;
-    }
-}
-
-// ==========================================
-// 3. MAIN INITIALIZATION
-// ==========================================
 async function initEngine() {
-    let webllm;
     try {
-        // 1. Load the library
-        webllm = await loadDependencies();
+        UI.setStatus("Checking WebGPU Support...", 5);
 
-        // 2. Check WebGPU
-        setStatusText("Checking WebGPU Support...", 15);
         if (!navigator.gpu) {
-            throw new Error("WebGPU not supported. Please use Chrome v113+ (Android/Desktop).");
+            throw new Error("WebGPU not supported. Please use Chrome v113+ or Edge.");
         }
 
-        // 3. Initialize Engine & DOWNLOAD MODEL
-        setStatusText("Starting Download...", 20);
-        
-        // Use a smaller model for better mobile support
-        const selectedModel = "Qwen2.5-1.5B-Instruct-q4f16_1-MLC";
+        const adapter = await navigator.gpu.requestAdapter();
+        if (!adapter) {
+            throw new Error("No GPU Adapter found. Device may be unsupported.");
+        }
 
-        engine = await webllm.CreateMLCEngine(selectedModel, {
-            initProgressCallback: (report) => {
-                // THIS IS THE DOWNLOAD PROGRESS
-                let percent = Math.round(report.progress * 100);
-                setStatusText(report.text, percent);
+        UI.setStatus("Initializing Engine...", 10);
+
+        // This starts the actual download
+        engine = await webllm.CreateMLCEngine(
+            OPENSKY_CONFIG.primary_model, 
+            {
+                initProgressCallback: (report) => {
+                    let percent = Math.round(report.progress * 100);
+                    UI.setStatus(report.text, percent);
+                }
             }
-        });
+        );
 
-        // 4. Success
-        setStatusText("Model Ready!", 100);
+        UI.setStatus("Model Loaded!", 100);
+        
+        // Switch screens
         setTimeout(() => {
-            loadingScreen.classList.add('hidden');
-            chatContainer.style.display = 'flex';
-            inputText.focus();
+            UI.loadingScreen.classList.add('hidden');
+            UI.chatContainer.style.display = 'flex';
+            UI.inputText.focus();
             setOnlineStatus(true);
         }, 500);
 
     } catch (e) {
         console.error(e);
-        setStatusText(`❌ Error: ${e.message}`, 0);
-        loadingLabel.style.color = "red";
+        UI.showError(e.message);
     }
 }
 
 // ==========================================
-// 4. AGENT LOGIC
+// 4. AGENT & CHAT LOGIC
 // ==========================================
 class Planner {
     constructor(goal) { this.goal = goal; }
     decompose() {
-        if (this.goal.toLowerCase().includes("code")) return ["Analyze", "Code", "Verify"];
-        return ["Understand", "Answer"];
+        return this.goal.toLowerCase().includes("code") 
+            ? ["Analyze", "Code", "Verify"] 
+            : ["Understand", "Answer"];
     }
 }
 
 class Agent {
     constructor(config) { this.Name = config.agent_name; this.Author = config.author; }
-    getSystemPrompt(plan) { return `You are ${this.Name}. Follow plan: ${plan.join(" -> ")}.`; }
+    getSystemPrompt(plan) { return `You are ${this.Name}. Plan: ${plan.join(" -> ")}.`; }
 }
 
-const agent = new Agent({ agent_name: "Opensky", author: "Hafij Shaikh" });
+const agent = new Agent(OPENSKY_CONFIG);
 
 async function runAgentLoop(userQuery) {
-    thinkingPanel.style.display = 'block';
-    thinkingContent.textContent = "Thinking...";
+    UI.thinkingPanel.style.display = 'block';
+    UI.thinkingContent.textContent = "Thinking...";
 
     const planner = new Planner(userQuery);
     const plan = planner.decompose();
-    thinkingContent.textContent = `Plan: ${plan.join(" -> ")}`;
+    UI.thinkingContent.textContent = `Plan: ${plan.join(" -> ")}`;
 
     try {
         const completion = await engine.chat.completions.create({
@@ -128,14 +130,14 @@ async function runAgentLoop(userQuery) {
             stream: true,
         });
 
-        thinkingPanel.style.display = 'none';
+        UI.thinkingPanel.style.display = 'none';
         
         const msgDiv = document.createElement('div');
         msgDiv.className = 'message sky';
         const contentWrapper = document.createElement('div');
         contentWrapper.className = 'sky-content';
         msgDiv.appendChild(contentWrapper);
-        messagesArea.appendChild(msgDiv);
+        UI.messagesArea.appendChild(msgDiv);
 
         let fullResponse = "";
         for await (const chunk of completion) {
@@ -143,11 +145,11 @@ async function runAgentLoop(userQuery) {
             if (delta) {
                 fullResponse += delta;
                 contentWrapper.innerHTML = parseMarkdown(fullResponse);
-                messagesArea.scrollTop = messagesArea.scrollHeight;
+                UI.messagesArea.scrollTop = UI.messagesArea.scrollHeight;
             }
         }
     } catch (err) {
-        thinkingPanel.style.display = 'none';
+        UI.thinkingPanel.style.display = 'none';
         appendMessage("sky", `Error: ${err.message}`);
     } finally {
         isGenerating = false;
@@ -156,13 +158,13 @@ async function runAgentLoop(userQuery) {
 }
 
 // ==========================================
-// 5. UI HELPERS
+// 5. HELPERS
 // ==========================================
 function setOnlineStatus(isOnline) {
-    sendBtn.disabled = !isOnline;
-    statusDot.className = isOnline ? 'status-dot' : 'status-dot loading';
-    statusText.textContent = isOnline ? 'Agent Ready' : 'Processing...';
-    statusText.className = isOnline ? 'status-text online' : 'status-text loading';
+    UI.sendBtn.disabled = !isOnline;
+    UI.statusDot.className = isOnline ? 'status-dot' : 'status-dot loading';
+    UI.statusText.textContent = isOnline ? 'Agent Ready' : 'Processing...';
+    UI.statusText.className = isOnline ? 'status-text online' : 'status-text loading';
 }
 
 function parseMarkdown(text) {
@@ -174,7 +176,7 @@ function parseMarkdown(text) {
     return escaped.replace(/\n/g, '<br>');
 }
 
-messagesArea.addEventListener('click', (e) => {
+UI.messagesArea.addEventListener('click', (e) => {
     if (e.target.classList.contains('copy-btn')) {
         const code = e.target.closest('.code-block').querySelector('pre').textContent;
         navigator.clipboard.writeText(code);
@@ -190,26 +192,26 @@ function appendMessage(role, text) {
     bubble.className = role === 'user' ? 'user-bubble' : 'sky-content';
     bubble.innerHTML = role === 'user' ? text : parseMarkdown(text);
     div.appendChild(bubble);
-    messagesArea.appendChild(div);
-    messagesArea.scrollTop = messagesArea.scrollHeight;
+    UI.messagesArea.appendChild(div);
+    UI.messagesArea.scrollTop = UI.messagesArea.scrollHeight;
 }
 
 async function sendMessage() {
-    const text = inputText.value.trim();
+    const text = UI.inputText.value.trim();
     if (!text || isGenerating) return;
     
     appendMessage("user", text);
-    inputText.value = '';
-    inputText.style.height = 'auto';
+    UI.inputText.value = '';
+    UI.inputText.style.height = 'auto';
     
     setOnlineStatus(false);
     isGenerating = true;
     await runAgentLoop(text);
 }
 
-inputText.addEventListener('input', function() { this.style.height = 'auto'; this.style.height = Math.min(this.scrollHeight, 100) + 'px'; });
-inputText.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } });
-sendBtn.addEventListener('click', sendMessage);
+UI.inputText.addEventListener('input', function() { this.style.height = 'auto'; this.style.height = Math.min(this.scrollHeight, 100) + 'px'; });
+UI.inputText.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } });
+UI.sendBtn.addEventListener('click', sendMessage);
 
 // --- START ---
 initEngine();
