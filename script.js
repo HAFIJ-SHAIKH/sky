@@ -1,5 +1,5 @@
-// CORRECT URL: Changed 'module.min.js' to 'index.min.js'
-import * as webllm from "https://cdn.jsdelivr.net/npm/@mlc-ai/web-llm@latest/lib/index.min.js";
+// FIX: Using the generic ESM entry point prevents 404 errors
+import * as webllm from "https://cdn.jsdelivr.net/npm/@mlc-ai/web-llm@latest/+esm";
 
 // ==========================================
 // 1. CONFIGURATION
@@ -7,15 +7,16 @@ import * as webllm from "https://cdn.jsdelivr.net/npm/@mlc-ai/web-llm@latest/lib
 const OPENSKY_CONFIG = {
     "agent_name": "Opensky",
     "author": "Hafij Shaikh",
-    // Smaller model for better mobile/download success
+    // Using a smaller, high-quality model for reliability
     "primary_model": "Qwen2.5-1.5B-Instruct-q4f16_1-MLC", 
-    "version": "3.2.2"
+    "version": "3.5.0"
 };
 
 // ==========================================
 // 2. UI CONTROLLER
 // ==========================================
 const UI = {
+    // Elements
     loadingScreen: document.getElementById('loadingScreen'),
     chatContainer: document.getElementById('chatContainer'),
     messagesArea: document.getElementById('messagesArea'),
@@ -29,44 +30,96 @@ const UI = {
     thinkingPanel: document.getElementById('thinkingPanel'),
     thinkingContent: document.getElementById('thinkingContent'),
 
+    // State
+    isOnline: false,
+
+    // Update Main Loading Status
     setStatus(text, percent = null) {
-        this.loadingLabel.textContent = text;
-        console.log(`[Status] ${text}`);
+        if (this.loadingLabel) this.loadingLabel.textContent = text;
+        console.log(`[System] ${text}`);
         if (percent !== null) {
-            this.loadingPercent.textContent = `${percent}%`;
-            this.sliderFill.style.width = `${percent}%`;
+            if (this.loadingPercent) this.loadingPercent.textContent = `${percent}%`;
+            if (this.sliderFill) this.sliderFill.style.width = `${percent}%`;
         }
     },
-    
-    showError(msg) {
-        this.setStatus(`❌ Error: ${msg}`, 0);
-        this.loadingLabel.style.color = "red";
-        this.sliderFill.style.backgroundColor = "red";
+
+    // Show Critical Error (Better UI)
+    showCriticalError(title, message) {
+        this.loadingLabel.innerHTML = `
+            <div style="text-align: center; color: #ef4444;">
+                <div style="font-size: 2rem; margin-bottom: 0.5rem;">⚠️</div>
+                <div style="font-weight: 700; margin-bottom: 0.25rem;">${title}</div>
+                <div style="font-size: 0.75rem; color: #64748b;">${message}</div>
+                <button onclick="location.reload()" style="margin-top: 1rem; padding: 0.5rem 1rem; background: #ef4444; color: white; border: none; border-radius: 6px; cursor: pointer;">
+                    Retry Boot Sequence
+                </button>
+            </div>
+        `;
+        this.loadingPercent.textContent = "HALT";
+        this.sliderFill.style.backgroundColor = "#ef4444";
+    },
+
+    // Thinking Panel
+    think(text) {
+        if (this.thinkingPanel) this.thinkingPanel.style.display = 'block';
+        if (this.thinkingContent) this.thinkingContent.textContent = text;
+    },
+    hideThink() {
+        if (this.thinkingPanel) this.thinkingPanel.style.display = 'none';
     }
 };
 
 // ==========================================
-// 3. CORE LOGIC
+// 3. AUTONOMOUS AGENT BRAIN
 // ==========================================
+class AutonomousAgent {
+    constructor(config) {
+        this.name = config.agent_name;
+        this.author = config.author;
+        this.personality = "Analytical, Precise, Autonomous";
+    }
+
+    // The Brain Loop: Plan -> Critique -> Execute
+    getSystemPrompt(userQuery) {
+        // This prompt forces the AI to 'think' before it speaks
+        return `You are ${this.name}, an autonomous AI agent created by ${this.author}.
+Your operational mode is: '${this.personality}'.
+
+When responding, follow this internal protocol:
+1. ANALYZE: Determine the core intent of the user's request.
+2. PLAN: Outline the steps needed to answer.
+3. EXECUTE: Generate the final response based on the plan.
+
+Current User Request: "${userQuery}"
+
+Begin your internal reasoning process now.`;
+    }
+}
+
+const agent = new AutonomousAgent(OPENSKY_CONFIG);
 let engine = null;
 let isGenerating = false;
 
+// ==========================================
+// 4. INITIALIZATION ENGINE
+// ==========================================
 async function initEngine() {
     try {
-        UI.setStatus("Checking WebGPU Support...", 5);
+        UI.setStatus("Connecting to Neural Network...", 5);
 
+        // WebGPU Check
         if (!navigator.gpu) {
-            throw new Error("WebGPU not supported. Please use Chrome v113+ or Edge.");
+            throw new Error("WebGPU Unavailable");
         }
-
+        
+        UI.setStatus("Initializing Core Systems...", 10);
+        
         const adapter = await navigator.gpu.requestAdapter();
-        if (!adapter) {
-            throw new Error("No GPU Adapter found. Device may be unsupported.");
-        }
+        if (!adapter) throw new Error("GPU Adapter Null");
 
-        UI.setStatus("Initializing Engine...", 10);
+        UI.setStatus("Downloading Intelligence Module...", 15);
 
-        // This starts the actual download
+        // Create Engine with Download Progress
         engine = await webllm.CreateMLCEngine(
             OPENSKY_CONFIG.primary_model, 
             {
@@ -77,9 +130,8 @@ async function initEngine() {
             }
         );
 
-        UI.setStatus("Model Loaded!", 100);
+        UI.setStatus("Boot Sequence Complete.", 100);
         
-        // Switch screens
         setTimeout(() => {
             UI.loadingScreen.classList.add('hidden');
             UI.chatContainer.style.display = 'flex';
@@ -89,49 +141,46 @@ async function initEngine() {
 
     } catch (e) {
         console.error(e);
-        UI.showError(e.message);
+        // Friendly Error Handling
+        if (e.message.includes("WebGPU")) {
+             UI.showCriticalError("Incompatible Hardware", "Your browser or device does not support WebGPU. Try Chrome v113+.");
+        } else if (e.message.includes("fetch")) {
+             UI.showCriticalError("Network Failure", "Could not download AI model. Check your internet connection.");
+        } else {
+             UI.showCriticalError("System Failure", e.message);
+        }
     }
 }
 
 // ==========================================
-// 4. AGENT & CHAT LOGIC
+// 5. CHAT LOGIC
 // ==========================================
-class Planner {
-    constructor(goal) { this.goal = goal; }
-    decompose() {
-        return this.goal.toLowerCase().includes("code") 
-            ? ["Analyze", "Code", "Verify"] 
-            : ["Understand", "Answer"];
-    }
-}
-
-class Agent {
-    constructor(config) { this.Name = config.agent_name; this.Author = config.author; }
-    getSystemPrompt(plan) { return `You are ${this.Name}. Plan: ${plan.join(" -> ")}.`; }
-}
-
-const agent = new Agent(OPENSKY_CONFIG);
-
 async function runAgentLoop(userQuery) {
-    UI.thinkingPanel.style.display = 'block';
-    UI.thinkingContent.textContent = "Thinking...";
-
-    const planner = new Planner(userQuery);
-    const plan = planner.decompose();
-    UI.thinkingContent.textContent = `Plan: ${plan.join(" -> ")}`;
-
+    UI.think("🧠 Initializing Cognitive Cycle...");
+    
+    // Simulate Autonomous Thinking Steps
+    await sleep(300);
+    UI.think("🔬 Step 1: Analyzing semantic intent...");
+    await sleep(400);
+    UI.think("📝 Step 2: Formulating reasoning chain...");
+    
     try {
         const completion = await engine.chat.completions.create({
             messages: [
-                { role: "system", content: agent.getSystemPrompt(plan) },
+                { role: "system", content: agent.getSystemPrompt(userQuery) },
                 { role: "user", content: userQuery }
             ],
             temperature: 0.7,
             stream: true,
         });
 
-        UI.thinkingPanel.style.display = 'none';
+        UI.think("✅ Step 3: Generating output stream...");
         
+        // Small delay to show the "Step 3" before text appears
+        await sleep(500);
+        UI.hideThink();
+
+        // Create Message Bubble
         const msgDiv = document.createElement('div');
         msgDiv.className = 'message sky';
         const contentWrapper = document.createElement('div');
@@ -149,21 +198,24 @@ async function runAgentLoop(userQuery) {
             }
         }
     } catch (err) {
-        UI.thinkingPanel.style.display = 'none';
-        appendMessage("sky", `Error: ${err.message}`);
+        UI.hideThink();
+        appendMessage("sky", `⚠️ **System Warning:** ${err.message}`);
     } finally {
         isGenerating = false;
         setOnlineStatus(true);
     }
 }
 
+function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
+
 // ==========================================
-// 5. HELPERS
+// 6. UI HELPERS & EVENTS
 // ==========================================
 function setOnlineStatus(isOnline) {
+    UI.isOnline = isOnline;
     UI.sendBtn.disabled = !isOnline;
     UI.statusDot.className = isOnline ? 'status-dot' : 'status-dot loading';
-    UI.statusText.textContent = isOnline ? 'Agent Ready' : 'Processing...';
+    UI.statusText.textContent = isOnline ? 'Autonomous Mode' : 'Processing...';
     UI.statusText.className = isOnline ? 'status-text online' : 'status-text loading';
 }
 
@@ -213,5 +265,5 @@ UI.inputText.addEventListener('input', function() { this.style.height = 'auto'; 
 UI.inputText.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } });
 UI.sendBtn.addEventListener('click', sendMessage);
 
-// --- START ---
+// --- BOOT SEQUENCE ---
 initEngine();
