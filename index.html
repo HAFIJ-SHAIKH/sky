@@ -6,23 +6,19 @@
   <meta name="theme-color" content="#000000">
   <title>Opensky</title>
   
-  <!-- Styles -->
   <link rel="stylesheet" href="style.css">
-  
-  <!-- Fonts -->
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   
-  <!-- External Libraries -->
+  <!-- Libraries -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 </head>
 <body>
 
-  <!-- Loading Screen -->
   <div class="loading-screen" id="loadingScreen">
     <div class="loader-content">
       
-      <!-- Your Specific Logo SVG (No Rotation) -->
+      <!-- Static Energy Vertex Logo -->
       <div class="logo-container">
         <svg width="80" height="80" viewBox="0 0 400 400" xmlns="http://www.w3.org/2000/svg">
           <rect width="400" height="400" fill="white" />
@@ -40,21 +36,17 @@
               </g>
             </g>
             <g fill="black">
-              <circle cx="120" cy="-40" r="1.5" />
-              <circle cx="-130" cy="20" r="1.2" />
-              <circle cx="50" cy="145" r="1" />
-              <circle cx="-60" cy="-140" r="0.8" />
-              <circle cx="100" cy="80" r="2" />
-              <circle cx="10" cy="-70" r="0.5" />
-              <circle cx="15" cy="-65" r="0.4" />
-              <circle cx="8" cy="-75" r="0.6" />
+              <circle cx="120" cy="-40" r="1.5" /><circle cx="-130" cy="20" r="1.2" />
+              <circle cx="50" cy="145" r="1" /><circle cx="-60" cy="-140" r="0.8" />
+              <circle cx="100" cy="80" r="2" /><circle cx="10" cy="-70" r="0.5" />
+              <circle cx="15" cy="-65" r="0.4" /><circle cx="8" cy="-75" r="0.6" />
             </g>
           </g>
         </svg>
       </div>
 
       <h1 class="loader-title">Opensky</h1>
-      <p class="loader-status" id="loadingLabel">Initializing System...</p>
+      <p class="loader-status" id="loadingLabel">Connecting to Network...</p>
       
       <div class="progress-container">
         <div class="progress-bar" id="sliderFill"></div>
@@ -62,20 +54,17 @@
       <div class="progress-stats"><span id="loadingPercent">0%</span></div>
       
       <div id="modelStatusContainer" class="model-status-container"></div>
-      <!-- Debug Log visible by default to catch errors -->
       <div id="debugLog"></div>
     </div>
   </div>
 
-  <!-- App Container -->
   <div class="app-container" id="chatContainer">
-    
     <header class="app-header">
       <div class="app-logo">
         <svg width="24" height="24" viewBox="0 0 400 400" xmlns="http://www.w3.org/2000/svg">
            <g transform="translate(200, 200) scale(0.06) rotate(-15)">
              <ellipse cx="0" cy="-60" rx="12" ry="18" fill="black" />
-             <path d="M-20,40 C-80,120 120,120 80,-40 C60,-120 -60,-120 -80,-40 C-100,60 40,160 140,40" fill="none" stroke="black" stroke-width="25" opacity="0.9" />
+             <path d="M-20,40 C-80,120 120,120 80,-40 C60,-120 -60,-120 -80,-40 C-100,60 40,160 140,40" fill="none" stroke="black" stroke-width="20" />
            </g>
         </svg>
         <span>Opensky</span>
@@ -112,7 +101,6 @@
     </footer>
   </div>
 
-  <!-- Logic -->
   <script type="module" src="script.js"></script>
 </body>
 </html>
