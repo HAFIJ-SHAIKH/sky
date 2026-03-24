@@ -3,19 +3,15 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <meta name="theme-color" content="#4f46e5">
-  <title>Opensky</title>
+  <meta name="theme-color" content="#0d9488">
+  <title>Opensky Agent</title>
   
-  <!-- Link to your existing CSS -->
   <link rel="stylesheet" href="style.css">
-  
-  <!-- Fonts -->
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   
-  <!-- Chart.js for Graphs -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 
-  <!-- REQUIRED: Import Map for LangGraph.js -->
   <script type="importmap">
     {
       "imports": {
@@ -32,12 +28,18 @@
   <div class="loading-screen" id="loadingScreen">
     <div class="loader-content">
       <div class="logo-mark">
-        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-          <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
+        <!-- New Abstract Bird/Router Logo -->
+        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path>
+          <polyline points="7.5 4.21 12 6.81 16.5 4.21"></polyline>
+          <polyline points="7.5 19.79 7.5 14.6 3 12"></polyline>
+          <polyline points="21 12 16.5 14.6 16.5 19.79"></polyline>
+          <polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline>
+          <line x1="12" y1="22.08" x2="12" y2="12"></line>
         </svg>
       </div>
       <h1 class="loader-title">Opensky</h1>
-      <p class="loader-status" id="loadingLabel">Initializing Smart Core...</p>
+      <p class="loader-status" id="loadingLabel">Initializing System...</p>
       <div class="progress-container">
         <div class="progress-bar" id="sliderFill"></div>
       </div>
@@ -47,8 +49,19 @@
     </div>
   </div>
 
-  <!-- Main App Container -->
+  <!-- App Container -->
   <div class="app-container" id="chatContainer">
+    
+    <header class="app-header">
+      <div class="app-logo">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+           <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path>
+        </svg>
+        <span>Opensky</span>
+      </div>
+      <div class="router-badge" id="statusBadge">Initializing</div>
+    </header>
+
     <main class="chat-area" id="messagesArea"></main>
 
     <footer class="input-area">
@@ -79,10 +92,6 @@
     </footer>
   </div>
 
-  <!-- Tesseract.js for OCR -->
-  <script src='https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js'></script>
-  
-  <!-- Link to your existing Javascript file -->
   <script type="module" src="script.js"></script>
 </body>
 </html>
