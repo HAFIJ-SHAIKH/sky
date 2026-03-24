@@ -1,6 +1,8 @@
 import * as webllm from "https://esm.run/@mlc-ai/web-llm";
 import { StateGraph, END } from "https://esm.run/@langchain/langgraph";
 import { HumanMessage, AIMessage } from "https://esm.run/@langchain/core/messages";
+// ADDED MISSING IMPORT for OCR tool
+import Tesseract from 'https://esm.run/tesseract.js';
 
 // ==========================================
 // 1. CONFIGURATION
@@ -10,11 +12,11 @@ const OPENSKY_CONFIG = {
     creator: "Hafij Shaikh"
 };
 
-// SINGLE SMART MODEL CONFIGURATION
-// Qwen3 1.7B - Fast and Efficient
+// FIXED MODEL CONFIGURATION
+// Changed from "Qwen3..." (invalid) to "Qwen2.5-1.5B-Instruct" (valid & fast)
 const MODEL_CONFIG = {
-    id: "Qwen3-1.7B-q0f16-MLC", 
-    name: "Qwen3 1.7B",
+    id: "Qwen2.5-1.5B-Instruct-q4f16_1-MLC", 
+    name: "Qwen 2.5 1.5B",
 };
 
 const AGENT_PROMPT = `
