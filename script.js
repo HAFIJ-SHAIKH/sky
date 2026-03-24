@@ -10,14 +10,14 @@ const OPENSKY_CONFIG = {
     creator: "Hafij Shaikh"
 };
 
-// ROUTER MODEL (Fast, Small)
+// ROUTER: Fast, handles tools and simple chat
 const ROUTER_CONFIG = {
-    id: "Phi-3-mini-4k-instruct-q4f16_1-MLC", 
-    name: "Phi-3 Mini",
+    id: "Phi-3.5-mini-instruct-q4f16_1-MLC", 
+    name: "Phi-3.5 Mini",
     role: "Router"
 };
 
-// WORKER MODEL (Smart, Large) - Lazy Loaded
+// WORKER: Heavy, handles complex reasoning
 const WORKER_CONFIG = {
     id: "Llama-3-8B-Instruct-q4f16_1-MLC",
     name: "Llama-3 8B",
@@ -25,17 +25,16 @@ const WORKER_CONFIG = {
 };
 
 const ROUTER_PROMPT = `
-You are the Router for ${OPENSKY_CONFIG.agent_name}.
-1. For simple chat, greetings, and basic questions: Respond directly.
-2. For complex tasks (coding, math, reasoning): Output exactly [ROUTE_TO_WORKER].
-3. For real-time data: Use tools. Format: ACTION: tool_name ARGS: value
-Keep responses brief.
+You are ${OPENSKY_CONFIG.agent_name}, a fast router.
+1. For complex tasks (coding, advanced math, reasoning): Output exactly [ROUTE_TO_WORKER].
+2. For everything else: Respond conversationally.
+3. To use tools: ACTION: tool_name ARGS: value
+Tools: wiki(topic), weather(city), define(word), country(name), pokemon(name), joke(), advice(), bored(), ocr(image).
 `;
 
 const WORKER_PROMPT = `
-You are the Advanced Reasoning Core for ${OPENSKY_CONFIG.agent_name}.
-You are intelligent, detailed, and thorough. 
-You handle complex coding, math, and creative tasks.
+You are the Advanced Intelligence Core of ${OPENSKY_CONFIG.agent_name}.
+You are brilliant at coding, math, and creative writing. Be detailed and helpful.
 `;
 
 // ==========================================
@@ -61,10 +60,9 @@ let routerEngine = null;
 let workerEngine = null;
 let isGenerating = false;
 let currentImageBase64 = null; 
-let workerLoaded = false;
 
 // ==========================================
-// 3. TOOLS
+// 3. TOOLS (Restored All)
 // ==========================================
 const Tools = {
     wiki: async (q) => {
@@ -79,9 +77,34 @@ const Tools = {
         const w = await (await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current_weather=true`)).json();
         return { text: `Weather in ${name}: ${w.current_weather.temperature}°C` };
     },
+    define: async (word) => {
+        try {
+            const res = await fetch(`https://api.dictionaryapi.dev/api/v2/entries/en/${word}`);
+            const d = await res.json();
+            return { text: d[0].meanings[0].definitions[0].definition };
+        } catch { return { text: "Definition not found" }; }
+    },
+    country: async (name) => {
+        const res = await fetch(`https://restcountries.com/v3.1/name/${name}`);
+        const d = await res.json();
+        return { text: `${d[0].name.common}, Capital: ${d[0].capital}`, image: d[0].flags?.svg };
+    },
+    pokemon: async (name) => {
+        const res = await fetch(`https://pokeapi.co/api/v2/pokemon/${name.toLowerCase()}`);
+        const d = await res.json();
+        return { text: `#${d.id} ${d.name.toUpperCase()}`, image: d.sprites?.front_default };
+    },
     joke: async () => {
         const d = await (await fetch("https://v2.jokeapi.dev/joke/Any?type=single")).json();
         return { text: d.joke };
+    },
+    advice: async () => {
+        const d = await (await fetch("https://api.adviceslip.com/advice")).text();
+        return { text: JSON.parse(d).slip.advice };
+    },
+    bored: async () => {
+        const d = await (await fetch("https://www.boredapi.com/api/activity")).json();
+        return { text: `${d.activity} (${d.type})` };
     },
     ocr: async (base64) => {
         try {
@@ -115,8 +138,7 @@ async function routerNode(state) {
         ...history.map(m => ({ role: m._getType(), content: m.content }))
     ];
 
-    // Create UI
-    const msgDiv = createMessageUI("⚡ Router Thinking...");
+    const msgDiv = createMessageUI("⚡ Router (Phi-3.5)");
     const content = msgDiv.querySelector('.assistant-content');
     const body = msgDiv.querySelector('.agent-body');
 
@@ -138,7 +160,7 @@ async function routerNode(state) {
     
     // Decision Logic
     if (fullText.includes("[ROUTE_TO_WORKER]")) {
-        updateStatus(msgDiv, "⏳ Loading Heavy Model...");
+        updateStatus(msgDiv, "⏳ Routing to Worker...");
         return { nextAction: "worker", messages: [new AIMessage(fullText)] };
     }
     
@@ -150,23 +172,21 @@ async function routerNode(state) {
 
 // NODE: Worker (Heavy)
 async function workerNode(state) {
-    if (!workerLoaded) {
-        appendSystemMessage("⏳ Downloading Heavy Model (Llama-3 8B)... this might take a moment.");
-        try {
-            workerEngine = await webllm.CreateMLCEngine(WORKER_CONFIG.id);
-            workerLoaded = true;
-        } catch(e) {
-            return { nextAction: END, messages: [new AIMessage("Failed to load heavy model.")] };
-        }
-    }
-
     const history = state.messages;
+    // Filter out the [ROUTE_TO_WORKER] text for clean context
+    const cleanHistory = history.map(m => {
+        if (m.content.includes("[ROUTE_TO_WORKER]")) {
+            return new HumanMessage("Please handle this complex request.");
+        }
+        return m;
+    });
+
     const messages = [
         { role: "system", content: WORKER_PROMPT },
-        ...history.map(m => ({ role: m._getType(), content: m.content }))
+        ...cleanHistory.map(m => ({ role: m._getType(), content: m.content }))
     ];
 
-    const msgDiv = createMessageUI("🧠 Worker Thinking...");
+    const msgDiv = createMessageUI("🧠 Worker (Llama-3 8B)");
     const content = msgDiv.querySelector('.assistant-content');
     const body = msgDiv.querySelector('.agent-body');
 
@@ -212,7 +232,6 @@ async function toolNode(state) {
     };
 }
 
-// Conditional Edge
 function checkNextAction(state) {
     return state.nextAction || END;
 }
@@ -236,7 +255,7 @@ async function initGraph() {
 }
 
 // ==========================================
-// 5. INIT (Fixed Download)
+// 5. INIT (Downloads Both Models)
 // ==========================================
 function showError(t, e) { 
     debugLog.style.display = 'block'; 
@@ -249,41 +268,50 @@ async function init() {
         loadingLabel.textContent = "Checking WebGPU...";
         if (!navigator.gpu) throw new Error("WebGPU not supported.");
 
+        // Prepare UI Cards
         modelStatusContainer.innerHTML = `
           <div class="model-card">
-            <div>
-                <div class="model-card-name">${ROUTER_CONFIG.name}</div>
-                <div class="model-card-desc">Router • Fast</div>
-            </div>
-            <div class="model-card-status" id="status-router">Waiting</div>
+            <div class="model-card-name">${ROUTER_CONFIG.name}</div>
+            <div class="model-card-desc" id="router-status">Waiting...</div>
           </div>
           <div class="model-card">
-             <div>
-                <div class="model-card-name">${WORKER_CONFIG.name}</div>
-                <div class="model-card-desc">Worker • On Demand</div>
-            </div>
-            <div class="model-card-status" id="status-worker">Standby</div>
+             <div class="model-card-name">${WORKER_CONFIG.name}</div>
+             <div class="model-card-desc" id="worker-status">Queued...</div>
           </div>
         `;
 
+        // 1. Download Router
         loadingLabel.textContent = `Downloading Router (${ROUTER_CONFIG.name})...`;
-        
-        // CRITICAL FIX: Using exact logic from original working code
         routerEngine = await webllm.CreateMLCEngine(ROUTER_CONFIG.id, {
             initProgressCallback: (report) => {
                 const p = Math.round(report.progress * 100);
                 sliderFill.style.width = `${p}%`;
                 loadingPercent.textContent = `${p}%`;
-                document.getElementById('status-router').textContent = `${p}%`;
-                console.log(report.text);
+                document.getElementById('router-status').textContent = report.text;
             }
         });
+        document.getElementById('router-status').textContent = "Ready";
 
-        document.getElementById('status-router').textContent = "Ready";
-        loadingLabel.textContent = "System Ready.";
+        // 2. Download Worker Immediately
+        loadingLabel.textContent = `Downloading Worker (${WORKER_CONFIG.name})...`;
+        sliderFill.style.width = "0%"; // Reset bar
+        loadingPercent.textContent = "0%";
         
+        workerEngine = await webllm.CreateMLCEngine(WORKER_CONFIG.id, {
+            initProgressCallback: (report) => {
+                const p = Math.round(report.progress * 100);
+                sliderFill.style.width = `${p}%`;
+                loadingPercent.textContent = `${p}%`;
+                document.getElementById('worker-status').textContent = report.text;
+            }
+        });
+        document.getElementById('worker-status').textContent = "Ready";
+
+        // 3. Compile Graph
+        loadingLabel.textContent = "Compiling Agent Graph...";
         await initGraph();
 
+        loadingLabel.textContent = "System Online.";
         setTimeout(() => {
             loadingScreen.classList.add('hidden');
             chatContainer.classList.add('active');
@@ -313,18 +341,11 @@ function createMessageUI(statusText) {
     return msgDiv;
 }
 
-function appendSystemMessage(text) {
-    const div = document.createElement('div');
-    div.className = 'message assistant';
-    div.innerHTML = `<div class="assistant-content" style="font-style:italic; color:var(--text-muted)">${text}</div>`;
-    messagesArea.appendChild(div);
-    smartScroll();
-}
-
 function appendToolResult(result) {
     const lastContent = messagesArea.querySelector('.message:last-child .assistant-content');
     if(lastContent) {
         let html = `<div class="tool-result"><b>Tool Result:</b> ${result.text}</div>`;
+        if(result.image) html += `<img src="${result.image}" style="max-width:100px; border-radius:4px; margin-top:5px;">`;
         lastContent.innerHTML += html;
     }
 }
@@ -340,7 +361,6 @@ function smartScroll() {
 
 function parseAndRender(text, container) {
     let html = text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-    // Charts
     html = html.replace(/```chart\s*([\s\S]*?)```/g, (match, json) => {
         try {
             const data = JSON.parse(json);
@@ -352,7 +372,6 @@ function parseAndRender(text, container) {
             return `<div class="chart-container"><canvas id="${id}"></canvas></div>`;
         } catch(e) { return `<div style="color:red">Chart Error</div>`; }
     });
-    // Code
     html = html.replace(/```(\w+)?\n([\s\S]*?)```/g, (m, lang, code) => 
         `<div class="code-block"><div class="code-header"><span>${lang||'code'}</span><button class="copy-btn" onclick="copyCode(this)">Copy</button></div><div class="code-body"><pre>${code}</pre></div></div>`
     );
@@ -392,7 +411,6 @@ async function handleAction() {
     const hasImage = !!currentImageBase64;
     if (!text && !hasImage) return;
 
-    // User Message
     const userMsg = document.createElement('div');
     userMsg.className = 'message user';
     userMsg.innerHTML = `<div class="user-bubble">${text}${hasImage ? `<img src="data:image/jpeg;base64,${currentImageBase64}">` : ''}</div>`;
@@ -432,5 +450,4 @@ inputText.oninput = function() { this.style.height = 'auto'; this.style.height =
 inputText.onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleAction(); } };
 sendBtn.onclick = handleAction;
 
-// Start
 init();
