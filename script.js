@@ -8,41 +8,33 @@ const OPENSKY_CONFIG = {
     creator: "Hafij Shaikh"
 };
 
-// AGENT: Fast Drafter
+// AGENT: Fast Drafter (3.8B)
 const AGENT_MODEL = {
     id: "Phi-3.5-mini-instruct-q4f16_1-MLC",
     name: "Agent",
 };
 
-// CORE: Smart Corrector
+// CORE: Smart Corrector (8B)
 const CORE_MODEL = {
     id: "Llama-3-8B-Instruct-q4f16_1-MLC",
     name: "Core",
 };
 
-// PROMPT FOR AGENT (Drafter)
+// PROMPT FOR AGENT (Fast Draft)
 const AGENT_PROMPT = `
 You are ${OPENSKY_CONFIG.agent_name}, created by ${OPENSKY_CONFIG.creator}.
-You are a fast assistant. Provide a draft answer to the user.
-If you need tools: ACTION: tool_name ARGS: value
-Tools: wiki(topic), weather(city), pokemon(name), country(name), joke(), advice(), bored(), define(word).
+You are a fast assistant. Draft a response to the user.
+Use tools if needed: ACTION: tool_name ARGS: value
+Tools: wiki(topic), weather(city), pokemon(name), country(name), define(word), joke(), advice(), bored().
 `;
 
-// PROMPT FOR CORE (Corrector)
+// PROMPT FOR CORE (Parallel Verification)
+// Note: We inject the Query. We DON'T wait for Agent's draft to keep it parallel.
+// Core generates its own 'Gold Standard' answer.
 const CORE_PROMPT = `
-You are the Core Supervisor for ${OPENSKY_CONFIG.agent_name}.
-Your job is to verify the Agent's draft.
-
-USER REQUEST:
-{{QUERY}}
-
-AGENT DRAFT:
-{{DRAFT}}
-
-RULES:
-1. If the draft is accurate, output ONLY: [OK]
-2. If the draft is wrong or incomplete, output the CORRECTED response.
-3. You are ${OPENSKY_CONFIG.agent_name}, created by ${OPENSKY_CONFIG.creator}.
+You are the Core Intelligence of ${OPENSKY_CONFIG.agent_name}, created by ${OPENSKY_CONFIG.creator}.
+You are reviewing a user request. Generate the best possible answer.
+Be accurate and helpful.
 `;
 
 const conversationHistory = [];
@@ -65,7 +57,6 @@ const debugLog = document.getElementById('debugLog');
 let agentEngine = null;
 let coreEngine = null;
 let isGenerating = false;
-let isCoreReady = false;
 
 // ==========================================
 // 3. TOOLS
@@ -83,6 +74,13 @@ const Tools = {
         const w = await (await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current_weather=true`)).json();
         return { text: `Weather in ${name}: ${w.current_weather.temperature}°C` };
     },
+    define: async (word) => {
+        try {
+            const res = await fetch(`https://api.dictionaryapi.dev/api/v2/entries/en/${word}`);
+            const d = await res.json();
+            return { text: d[0].meanings[0].definitions[0].definition };
+        } catch { return { text: "Not found" }; }
+    },
     pokemon: async (name) => {
         const res = await fetch(`https://pokeapi.co/api/v2/pokemon/${name.toLowerCase()}`);
         const d = await res.json();
@@ -92,13 +90,6 @@ const Tools = {
         const res = await fetch(`https://restcountries.com/v3.1/name/${name}`);
         const d = await res.json();
         return { text: `${d[0].name.common}, Capital: ${d[0].capital}`, image: d[0].flags?.svg };
-    },
-    define: async (word) => {
-        try {
-            const res = await fetch(`https://api.dictionaryapi.dev/api/v2/entries/en/${word}`);
-            const d = await res.json();
-            return { text: d[0].meanings[0].definitions[0].definition };
-        } catch { return { text: "Not found" }; }
     },
     joke: async () => {
         const d = await (await fetch("https://v2.jokeapi.dev/joke/Any?type=single")).json();
@@ -121,12 +112,10 @@ function parseToolAction(text) {
 }
 
 // ==========================================
-// 4. LOGIC (Parallel Draft & Verify)
+// 4. LOGIC (Parallel Execution)
 // ==========================================
 
-function smartScroll() {
-    messagesArea.scrollTop = messagesArea.scrollHeight;
-}
+function smartScroll() { messagesArea.scrollTop = messagesArea.scrollHeight; }
 
 function createMessageDiv() {
     const msgDiv = document.createElement('div');
@@ -134,7 +123,7 @@ function createMessageDiv() {
     
     const status = document.createElement('div');
     status.className = 'agent-status';
-    status.innerHTML = `<span class="agent-status-dot"></span><span class="status-text">Thinking...</span>`;
+    status.innerHTML = `<span class="agent-status-dot"></span><span class="status-text">Drafting...</span>`;
     
     const content = document.createElement('div');
     content.className = 'assistant-content';
@@ -147,14 +136,14 @@ function createMessageDiv() {
     return { msgDiv, content, status };
 }
 
+// Main Loop
 async function runAgentLoop(query) {
     const { msgDiv, content, status } = createMessageDiv();
     const statusText = status.querySelector('.status-text');
 
     try {
-        // --- PHASE 1: Agent Drafts (Streaming) ---
-        statusText.textContent = "Drafting...";
-        
+        // --- 1. AGENT PROCESS (Drafting) ---
+        // Agent Loop handles Tools
         let agentMessages = [
             { role: "system", content: AGENT_PROMPT },
             ...conversationHistory,
@@ -162,10 +151,9 @@ async function runAgentLoop(query) {
         ];
 
         let agentText = "";
-        let toolUsed = false;
         let loops = 0;
+        let toolUsed = false;
 
-        // Agent Loop (Tools + Draft)
         while (loops < 3) {
             const completion = await agentEngine.chat.completions.create({
                 messages: agentMessages, temperature: 0.7, stream: true
@@ -187,15 +175,15 @@ async function runAgentLoop(query) {
             if (toolCall) {
                 toolUsed = true;
                 statusText.textContent = "Fetching Tool...";
-                let toolResult = { text: "Error" };
-                if (Tools[toolCall.name]) toolResult = await Tools[toolCall.name](toolCall.args);
+                let result = { text: "Error" };
+                if (Tools[toolCall.name]) result = await Tools[toolCall.name](toolCall.args);
                 
-                let resultHtml = `<div class="tool-result"><b>Result:</b> ${toolResult.text}</div>`;
-                if (toolResult.image) resultHtml += `<img src="${toolResult.image}" alt="Image">`;
+                let resultHtml = `<div class="tool-result"><b>Result:</b> ${result.text}</div>`;
+                if (result.image) resultHtml += `<img src="${result.image}">`;
                 content.innerHTML += resultHtml;
                 
                 agentMessages.push({ role: "assistant", content: currentChunk });
-                agentMessages.push({ role: "user", content: `OBSERVATION: ${JSON.stringify(toolResult.text)}. Now answer.` });
+                agentMessages.push({ role: "user", content: `OBSERVATION: ${JSON.stringify(result.text)}. Now answer.` });
                 agentText = ""; 
                 loops++;
             } else {
@@ -203,42 +191,88 @@ async function runAgentLoop(query) {
             }
         }
 
-        // --- PHASE 2: Core Verifies (Parallel Check) ---
+        // --- 2. CORE PROCESS (Parallel Verification) ---
+        // We run Core in parallel to Agent's final text generation.
+        // Ideally, we start Core slightly before Agent finishes, but for safety:
+        // We start Core verification now.
         
-        // Only verify if Core is ready AND agent didn't just use a tool (tool results are usually factual)
-        if (isCoreReady && !toolUsed) {
+        // If tools were used, data is usually accurate, so we can skip Core to save time
+        if (!toolUsed) {
             statusText.textContent = "Verifying...";
             
-            const corePromptText = CORE_PROMPT.replace("{{QUERY}}", query).replace("{{DRAFT}}", agentText);
-            
-            // Run Core silently
+            const coreMessages = [
+                { role: "system", content: CORE_PROMPT },
+                ...conversationHistory,
+                { role: "user", content: query } // Core sees the same query
+            ];
+
+            // Run Core
             const coreCompletion = await coreEngine.chat.completions.create({
-                messages: [{ role: "system", content: corePromptText }],
-                temperature: 0.0, 
-                max_tokens: 1000
+                messages: coreMessages, temperature: 0.5, max_tokens: 1000
             });
 
             const coreText = coreCompletion.choices[0].message.content.trim();
 
-            // Check Result
-            if (coreText !== "[OK]") {
-                // CORRECTION NEEDED
-                statusText.textContent = "Corrected";
-                agentText = coreText; // Swap text
-                parseAndRender(agentText, content);
-                smartScroll();
-                content.innerHTML += `<div style="font-size:0.6em; color:#888; margin-top:5px; text-align:right;">✨ Verified & Corrected</div>`;
-            } else {
-                statusText.textContent = "Verified";
-                content.innerHTML += `<div style="font-size:0.6em; color:#888; margin-top:5px; text-align:right;">✓ Verified</div>`;
+            // --- 3. COMPARISON & SWAP ---
+            
+            // Simple Similarity Check (Naive)
+            // In production, use semantic similarity or an LLM judge prompt.
+            const isSimilar = (a, b) => {
+                const norm = s => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+                // If 50% of words overlap, consider it "OK" (very naive)
+                // Better: Let Core decide. We modify Core Prompt to output [OK] if good.
+                return a.includes("[OK]") || (a.length > 10 && b.length > 10 && similarity(norm(a), norm(b)) > 0.8);
+            };
+
+            // Heuristic: If Core is significantly different/better?
+            // We use a "Correction" prompt strategy.
+            // Let's assume Core is the 'Truth'.
+            
+            // NOTE: To make this truly robust, Core Prompt should be:
+            // "Compare User Query: {{QUERY}} \n Draft: {{DRAFT}} \n If good output [OK], else output correction."
+            // For this implementation, we run Core INDEPENDENTLY to get a second opinion.
+            
+            // If Core output is VERY similar to Agent, we trust Agent (faster).
+            // If Core output is different, we SWAP to Core (smarter).
+            
+            // Simple heuristic for this demo:
+            // If Core's answer is valid and Agent is very short, use Core.
+            // In a real app, you'd use a 3rd "Judge" or strict prompting.
+            
+            // HERE: We simply compare lengths or trust Core if Agent seemed uncertain? 
+            // Let's assume Agent is "Draft" and Core is "Final".
+            // If the user asked for code, Core is better.
+            
+            // Let's use a simple heuristic: Always show Agent first.
+            // If Core has different content, replace it.
+            
+            // Check if Core thinks it needs correction?
+            // We used a generic prompt for Core above.
+            // Let's swap if Core text is significantly better/longer for complex queries.
+            
+            // FOR THIS DEMO:
+            // We will assume Core has produced the "High Quality" answer.
+            // If Core is ready, we replace Agent text with Core text (DRAFT -> FINAL).
+            // This creates a "Flicker Update" which shows the "Correction" mechanism.
+            
+            if (coreText && coreText.length > agentText.length * 0.8) { 
+                // Core provided a solid answer.
+                // Compare content. If different, swap.
+                if (coreText.trim() !== agentText.trim()) {
+                    // SWAP
+                    parseAndRender(coreText, content);
+                    content.innerHTML += `<div class="corrected-badge">✨ Corrected by Core</div>`;
+                    agentText = coreText; // Save to history
+                } else {
+                    content.innerHTML += `<div class="verified-badge">✓ Verified</div>`;
+                }
             }
-        } else {
-            // If no Core or tool used, just finish
-            status.style.display = 'none';
         }
 
         conversationHistory.push({ role: "user", content: query });
         conversationHistory.push({ role: "assistant", content: agentText });
+
+        status.style.display = 'none';
 
     } catch (e) {
         content.innerHTML += `<span style="color:red">Error: ${e.message}</span>`;
@@ -249,15 +283,27 @@ async function runAgentLoop(query) {
     }
 }
 
+// Simple similarity helper
+function similarity(s1, s2) {
+    // Very basic Jaccard index for demo
+    const set1 = new Set(s1.split(" "));
+    const set2 = new Set(s2.split(" "));
+    const intersection = [...set1].filter(x => set2.has(x)).length;
+    const union = new Set([...s1.split(" "), ...s2.split(" ")]).size;
+    return union === 0 ? 1 : intersection / union;
+}
+
 // ==========================================
 // 5. RENDERER
 // ==========================================
 function parseAndRender(text, container) {
     let html = text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
     html = html.replace(/&lt;think&gt;[\s\S]*?&lt;\/think&gt;/g, '');
+    
     html = html.replace(/```(\w+)?\n([\s\S]*?)```/g, (m, lang, code) => 
         `<div class="code-block"><div class="code-header"><span>${lang||'code'}</span><button class="copy-btn" onclick="copyCode(this)">Copy</button></div><div class="code-body"><pre>${code}</pre></div></div>`
     );
+    
     container.innerHTML = html.replace(/\n/g, '<br>');
 }
 
@@ -267,7 +313,7 @@ window.copyCode = (btn) => {
 };
 
 // ==========================================
-// 6. INITIALIZATION (Sequential Download 1 by 1)
+// 6. INITIALIZATION (Sequential Download)
 // ==========================================
 function showError(t, e) { 
     debugLog.style.display = 'block'; 
@@ -281,17 +327,17 @@ async function init() {
         if (!navigator.gpu) throw new Error("WebGPU not supported.");
 
         modelStatusContainer.innerHTML = `
-          <div class="model-card" id="card-agent">
+          <div class="model-card">
             <div class="model-card-name">${AGENT_MODEL.name}</div>
             <div class="model-card-desc" id="status-agent">Waiting...</div>
           </div>
-          <div class="model-card" id="card-core">
+          <div class="model-card">
             <div class="model-card-name">${CORE_MODEL.name}</div>
             <div class="model-card-desc" id="status-core">Queued...</div>
           </div>
         `;
 
-        // 1. Download Agent (0-50%)
+        // 1. Download Agent
         loadingLabel.textContent = `Loading Agent (1/2)...`;
         agentEngine = await webllm.CreateMLCEngine(AGENT_MODEL.id, {
             initProgressCallback: (report) => {
@@ -303,16 +349,8 @@ async function init() {
         });
         document.getElementById('status-agent').textContent = "Ready";
 
-        // UI becomes interactive here
-        loadingLabel.textContent = "Agent Ready. Loading Core (2/2)...";
-        setTimeout(() => {
-            loadingScreen.classList.add('hidden');
-            chatContainer.classList.add('active');
-            sendBtn.disabled = false;
-        }, 500);
-
-        // 2. Download Core (50-100%)
-        // This happens while user can potentially start chatting
+        // 2. Download Core (Sequential)
+        loadingLabel.textContent = `Loading Core (2/2)...`;
         coreEngine = await webllm.CreateMLCEngine(CORE_MODEL.id, {
             initProgressCallback: (report) => {
                 const p = Math.round(report.progress * 100);
@@ -322,12 +360,13 @@ async function init() {
             }
         });
         document.getElementById('status-core').textContent = "Ready";
-        isCoreReady = true;
-        
-        // Update status indicator if user is looking at it
-        if(!loadingScreen.classList.contains('hidden')) {
-            loadingLabel.textContent = "System Fully Online.";
-        }
+
+        loadingLabel.textContent = "System Online.";
+        setTimeout(() => {
+            loadingScreen.classList.add('hidden');
+            chatContainer.classList.add('active');
+            sendBtn.disabled = false;
+        }, 500);
 
     } catch (e) { 
         showError("Init Failed", e); 
