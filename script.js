@@ -10,29 +10,26 @@ const OPENSKY_CONFIG = {
     creator: "Hafij Shaikh"
 };
 
-const ROUTER_CONFIG = {
-    id: "Phi-3.5-mini-instruct-q4f16_1-MLC", 
-    name: "Phi-3.5 Mini",
-    role: "Router"
-};
-
-const WORKER_CONFIG = {
-    id: "Llama-3-8B-Instruct-q4f16_1-MLC",
+// SINGLE SMART MODEL CONFIGURATION
+// Using Llama-3-8B for high intelligence.
+// If this is too slow/heavy for your device, change ID to: "Phi-3.5-mini-instruct-q4f16_1-MLC"
+const MODEL_CONFIG = {
+    id: "Llama-3-8B-Instruct-q4f16_1-MLC", 
     name: "Llama-3 8B",
-    role: "Worker"
 };
 
-const ROUTER_PROMPT = `
+const AGENT_PROMPT = `
 You are ${OPENSKY_CONFIG.agent_name}, created by ${OPENSKY_CONFIG.creator}.
-1. If the task is complex (coding, math), output exactly: [ROUTE_TO_WORKER]
-2. Otherwise, respond conversationally.
-3. To use tools: ACTION: tool_name ARGS: value
-Tools: wiki(topic), weather(city), define(word), country(name), pokemon(name), joke(), advice(), bored(), ocr(image).
-`;
+You are an advanced AI agent with access to tools. You are smart, detailed, and helpful.
 
-const WORKER_PROMPT = `
-You are the Advanced Intelligence Core of ${OPENSKY_CONFIG.agent_name}, created by ${OPENSKY_CONFIG.creator}.
-You are brilliant at coding, math, and creative writing. Be detailed.
+INSTRUCTIONS:
+- If you need real-time data or specific information, use a tool.
+- To use a tool, output strictly in this format: ACTION: tool_name ARGS: value
+- After receiving an observation, process it and answer the user.
+- If you cannot answer with tools, use your internal knowledge.
+
+TOOLS:
+wiki(topic), weather(city), define(word), country(name), pokemon(name), joke(), advice(), bored(), ocr(image).
 `;
 
 // ==========================================
@@ -54,13 +51,12 @@ const imagePreviewContainer = document.getElementById('imagePreviewContainer');
 const imagePreview = document.getElementById('imagePreview');
 const removeImageBtn = document.getElementById('removeImageBtn');
 
-let routerEngine = null;
-let workerEngine = null;
+let engine = null;
 let isGenerating = false;
 let currentImageBase64 = null; 
 
 // ==========================================
-// 3. TOOLS (Fixed Logic)
+// 3. TOOLS
 // ==========================================
 const Tools = {
     wiki: async (q) => {
@@ -80,7 +76,7 @@ const Tools = {
             const res = await fetch(`https://api.dictionaryapi.dev/api/v2/entries/en/${word}`);
             const d = await res.json();
             return { text: d[0].meanings[0].definitions[0].definition };
-        } catch { return { text: "Definition not found" }; }
+        } catch { return { text: "Not found" }; }
     },
     country: async (name) => {
         const res = await fetch(`https://restcountries.com/v3.1/name/${name}`);
@@ -104,12 +100,11 @@ const Tools = {
         const d = await (await fetch("https://www.boredapi.com/api/activity")).json();
         return { text: d.activity };
     },
-    // FIX: OCR now accepts base64 data as argument
     ocr: async (base64) => {
-        if(!base64) return { text: "No image provided" };
+        if(!base64) return { text: "No image" };
         try {
             const res = await Tesseract.recognize(`data:image/jpeg;base64,${base64}`, 'eng');
-            return { text: res.data.text || "No text found" };
+            return { text: res.data.text || "No text" };
         } catch(e) { return { text: "OCR Error" }; }
     }
 };
@@ -121,7 +116,7 @@ function parseToolAction(text) {
 }
 
 // ==========================================
-// 4. GRAPH NODES
+// 4. LANGGRAPH NODES
 // ==========================================
 
 function createMessageUI(title) {
@@ -130,7 +125,7 @@ function createMessageUI(title) {
     
     const panel = document.createElement('div');
     panel.className = 'agent-panel';
-    panel.innerHTML = `<div class="agent-header"><span>${title}</span><small style="margin-left:auto; opacity:0.5">▼</small></div><div class="agent-body">Thinking...</div>`;
+    panel.innerHTML = `<div class="agent-header"><span>${title}</span><small style="opacity:0.5">▼</small></div><div class="agent-body">Processing...</div>`;
     panel.querySelector('.agent-header').onclick = () => panel.classList.toggle('open');
 
     const content = document.createElement('div');
@@ -144,17 +139,18 @@ function createMessageUI(title) {
     return { msgDiv, content };
 }
 
-async function routerNode(state) {
+// SINGLE AGENT NODE
+async function agentNode(state) {
     const history = state.messages;
     const messages = [
-        { role: "system", content: ROUTER_PROMPT },
+        { role: "system", content: AGENT_PROMPT },
         ...history.map(m => ({ role: m._getType(), content: m.content }))
     ];
 
-    const { msgDiv, content } = createMessageUI("⚡ Router (Phi-3.5)");
+    const { msgDiv, content } = createMessageUI("🧠 Opensky");
     const body = msgDiv.querySelector('.agent-body');
 
-    const stream = await routerEngine.chat.completions.create({
+    const stream = await engine.chat.completions.create({
         messages, temperature: 0.7, stream: true
     });
 
@@ -170,47 +166,12 @@ async function routerNode(state) {
         }
     }
     
-    if (fullText.includes("[ROUTE_TO_WORKER]")) {
-        body.textContent += "\n\n-> Routing to Worker...";
-        return { nextAction: "worker", messages: [new AIMessage(fullText)] };
-    }
-    
+    // Decision Logic
     const toolCall = parseToolAction(fullText);
-    if (toolCall) return { nextAction: "tools", messages: [new AIMessage(fullText)] };
-
-    return { nextAction: END, messages: [new AIMessage(fullText)] };
-}
-
-async function workerNode(state) {
-    const history = state.messages;
-    const cleanHistory = history.map(m => {
-        if (m.content.includes("[ROUTE_TO_WORKER]")) return new HumanMessage("Handle this.");
-        return m;
-    });
-
-    const messages = [
-        { role: "system", content: WORKER_PROMPT },
-        ...cleanHistory.map(m => ({ role: m._getType(), content: m.content }))
-    ];
-
-    const { msgDiv, content } = createMessageUI("🧠 Worker (Llama-3)");
-    const body = msgDiv.querySelector('.agent-body');
-
-    const stream = await workerEngine.chat.completions.create({
-        messages, temperature: 0.7, stream: true
-    });
-
-    let fullText = "";
-    for await (const chunk of stream) {
-        if (!isGenerating) break;
-        const delta = chunk.choices[0].delta.content;
-        if (delta) {
-            fullText += delta;
-            body.textContent = fullText;
-            parseAndRender(fullText, content);
-            smartScroll();
-        }
+    if (toolCall) {
+        return { nextAction: "tools", messages: [new AIMessage(fullText)] };
     }
+
     return { nextAction: END, messages: [new AIMessage(fullText)] };
 }
 
@@ -218,13 +179,12 @@ async function toolsNode(state) {
     const lastMsg = state.messages[state.messages.length - 1].content;
     const toolCall = parseToolAction(lastMsg);
     
-    const { msgDiv, content } = createMessageUI("🔧 Tools");
-    content.innerHTML = "Executing tool...";
+    const { msgDiv, content } = createMessageUI("🔧 Tool Execution");
+    content.innerHTML = "Running tool...";
 
     let result = { text: "Tool not found" };
     if (toolCall) {
         const { name, args } = toolCall;
-        // FIX: Pass image data from state to OCR tool
         if (name === 'ocr') result = await Tools.ocr(state.imageData);
         else if (Tools[name]) result = await Tools[name](args);
     }
@@ -232,7 +192,7 @@ async function toolsNode(state) {
     content.innerHTML += `<div class="tool-result"><b>Result:</b> ${result.text}</div>`;
     
     return { 
-        nextAction: "router", 
+        nextAction: "agent", 
         messages: [new HumanMessage(`OBSERVATION: ${JSON.stringify(result.text)}. Now answer.`)] 
     };
 }
@@ -250,21 +210,18 @@ async function initGraph() {
     const agentStateChannels = {
         messages: { value: (x, y) => x.concat(y), default: () => [] },
         nextAction: { value: (x, y) => y ?? x, default: () => null },
-        // Keep imageData persistent through the loop
         imageData: { value: (x, y) => y ?? x, default: () => null } 
     };
 
     const workflow = new StateGraph({ channels: agentStateChannels });
     
-    workflow.addNode("router", routerNode);
-    workflow.addNode("worker", workerNode);
+    workflow.addNode("agent", agentNode);
     workflow.addNode("tools", toolsNode);
     
-    workflow.setEntryPoint("router");
+    workflow.setEntryPoint("agent");
     
-    workflow.addConditionalEdges("router", checkNextAction);
-    workflow.addConditionalEdges("worker", checkNextAction);
-    workflow.addEdge("tools", "router");
+    workflow.addConditionalEdges("agent", checkNextAction);
+    workflow.addEdge("tools", "agent");
     
     app = workflow.compile();
 }
@@ -284,39 +241,24 @@ async function init() {
         if (!navigator.gpu) throw new Error("WebGPU not supported.");
 
         modelStatusContainer.innerHTML = `
-          <div class="model-card"><div class="model-card-name">${ROUTER_CONFIG.name}</div><div class="model-card-desc" id="router-status">Waiting...</div></div>
-          <div class="model-card"><div class="model-card-name">${WORKER_CONFIG.name}</div><div class="model-card-desc" id="worker-status">Queued...</div></div>
+          <div class="model-card">
+            <div class="model-card-name">${MODEL_CONFIG.name}</div>
+            <div class="model-card-desc" id="model-status">Waiting...</div>
+          </div>
         `;
 
-        // 1. Router
-        loadingLabel.textContent = `Step 1: Downloading Router...`;
-        routerEngine = await webllm.CreateMLCEngine(ROUTER_CONFIG.id, {
-            initProgressCallback: (report) => {
-                const p = Math.round(report.progress * 100);
-                sliderFill.style.width = `${p}%`;
-                loadingPercent.textContent = `${p}%`;
-                document.getElementById('router-status').textContent = report.text;
-            }
-        });
-        document.getElementById('router-status').textContent = "Ready";
-
-        // 2. Worker
-        loadingLabel.textContent = `Step 2: Downloading Worker...`;
-        sliderFill.style.width = "0%";
-        loadingPercent.textContent = "0%";
+        loadingLabel.textContent = `Downloading ${MODEL_CONFIG.name}...`;
         
-        workerEngine = await webllm.CreateMLCEngine(WORKER_CONFIG.id, {
+        engine = await webllm.CreateMLCEngine(MODEL_CONFIG.id, {
             initProgressCallback: (report) => {
                 const p = Math.round(report.progress * 100);
                 sliderFill.style.width = `${p}%`;
                 loadingPercent.textContent = `${p}%`;
-                document.getElementById('worker-status').textContent = report.text;
+                document.getElementById('model-status').textContent = report.text;
             }
         });
-        document.getElementById('worker-status').textContent = "Ready";
 
-        // 3. Compile
-        loadingLabel.textContent = "Compiling Graph...";
+        document.getElementById('model-status').textContent = "Ready";
         await initGraph();
 
         loadingLabel.textContent = "Ready.";
@@ -367,8 +309,7 @@ async function handleAction() {
     if (isGenerating) {
         isGenerating = false;
         sendBtn.classList.remove('stop-btn');
-        if(routerEngine) await routerEngine.interruptGenerate();
-        if(workerEngine) await workerEngine.interruptGenerate();
+        if(engine) await engine.interruptGenerate();
         return;
     }
 
@@ -387,10 +328,7 @@ async function handleAction() {
     inputText.value = '';
     inputText.style.height = 'auto';
     
-    // FIX: Capture image data to pass into the stream state
     const imageForGraph = currentImageBase64;
-    
-    // Clear UI preview immediately
     currentImageBase64 = null;
     imagePreviewContainer.classList.remove('active');
     imageInput.value = '';
@@ -401,7 +339,6 @@ async function handleAction() {
     smartScroll();
 
     try {
-        // Pass imageData in the initial state
         const stream = await app.stream({ 
             messages: [new HumanMessage(inputWithHint)], 
             imageData: imageForGraph 
