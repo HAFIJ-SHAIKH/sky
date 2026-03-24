@@ -8,43 +8,50 @@ const OPENSKY_CONFIG = {
     creator: "Hafij Shaikh"
 };
 
-// MODEL 1: Agent (Fast, Reasoning, Tools)
-// Using the specific ID requested.
-// Fallback: Qwen2.5-1.5B-Instruct (Base model) if ID not found.
+// MODEL 1: Agent (Router & Simple Tasks) - Extremely Fast
 const AGENT_MODEL = {
-    id: "DeepSeek-R1-Distill-Qwen-1.5B-q4f16_1-MLC",
-    fallback_id: "Qwen2.5-1.5B-Instruct-q4f16_1-MLC",
+    id: "Qwen2.5-0.5B-Instruct-q4f16_1-MLC",
     name: "Agent",
 };
 
-// MODEL 2: Core (Smart, Creative, Complex)
+// MODEL 2: Core (Intelligence) - Heavy Lifting
 const CORE_MODEL = {
     id: "Llama-3-8B-Instruct-q4f16_1-MLC",
     name: "Core",
 };
 
-const AGENT_PROMPT = `
-You are ${OPENSKY_CONFIG.agent_name}, a fast reasoning agent created by ${OPENSKY_CONFIG.creator}.
+// Updated Router Prompt to handle identity
+const ROUTER_PROMPT = `
+You are a Router. Analyze the user's request.
+If the request is SIMPLE (greetings, basic facts, simple math, jokes, identity questions), output ONLY:
+SIMPLE: [your short answer]
 
-RULES:
-1. Think inside <think...</think tags.
-2. If the task is simple or requires tools: handle it yourself.
-   - Tool format: ACTION: tool_name ARGS: value
-3. If the task is COMPLEX (coding, long essays, complex math): Output exactly: [ROUTE_TO_CORE]
-   Then stop immediately.
+If the request is COMPLEX (coding, essay, creative writing, deep reasoning), output ONLY:
+COMPLEX
 
-TOOLS:
-wiki(topic), weather(city), define(word), country(name), pokemon(name), joke(), advice(), bored().
+CRITICAL IDENTITY:
+If asked "who are you", "your name", "who made you", or "who created you":
+You are ${OPENSKY_CONFIG.agent_name}, created by ${OPENSKY_CONFIG.creator}.
+Answer simply in the SIMPLE format.
 `;
 
+// Updated Simple Task Prompt to reinforce identity
+const SIMPLE_TASK_PROMPT = `
+You are ${OPENSKY_CONFIG.agent_name}, created by ${OPENSKY_CONFIG.creator}.
+You are a fast assistant. Respond concisely.
+If asked about your name or creator, state these facts clearly.
+Tools: wiki(topic), weather(city), pokemon(name), country(name).
+`;
+
+// Core prompt already had it, but reinforcing
 const CORE_PROMPT = `
 You are the Advanced Intelligence Core of ${OPENSKY_CONFIG.agent_name}.
-You are brilliant, detailed, and creative. The user has a complex request that requires your superior processing power.
-Answer the user's request with high detail and quality.
+You were created by ${OPENSKY_CONFIG.creator}.
+You are brilliant, detailed, and creative. Fulfill the user's request with high quality.
 `;
 
 const conversationHistory = [];
-const MAX_HISTORY = 10; 
+const MAX_HISTORY = 30; 
 
 // ==========================================
 // 2. DOM
@@ -59,16 +66,10 @@ const loadingPercent = document.getElementById('loadingPercent');
 const loadingLabel = document.getElementById('loadingLabel');
 const modelStatusContainer = document.getElementById('modelStatusContainer');
 const debugLog = document.getElementById('debugLog');
-const uploadBtn = document.getElementById('uploadBtn');
-const imageInput = document.getElementById('imageInput');
-const imagePreviewContainer = document.getElementById('imagePreviewContainer');
-const imagePreview = document.getElementById('imagePreview');
-const removeImageBtn = document.getElementById('removeImageBtn');
 
 let agentEngine = null;
 let coreEngine = null; 
 let isGenerating = false;
-let currentImageBase64 = null; 
 
 // ==========================================
 // 3. TOOLS
@@ -86,34 +87,15 @@ const Tools = {
         const w = await (await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current_weather=true`)).json();
         return { text: `Weather in ${name}: ${w.current_weather.temperature}°C` };
     },
-    define: async (word) => {
-        try {
-            const res = await fetch(`https://api.dictionaryapi.dev/api/v2/entries/en/${word}`);
-            const d = await res.json();
-            return { text: d[0].meanings[0].definitions[0].definition };
-        } catch { return { text: "Not found" }; }
-    },
-    country: async (name) => {
-        const res = await fetch(`https://restcountries.com/v3.1/name/${name}`);
-        const d = await res.json();
-        return { text: `${d[0].name.common}, Capital: ${d[0].capital}`, image: d[0].flags?.svg };
-    },
     pokemon: async (name) => {
         const res = await fetch(`https://pokeapi.co/api/v2/pokemon/${name.toLowerCase()}`);
         const d = await res.json();
         return { text: `#${d.id} ${d.name}`, image: d.sprites?.front_default };
     },
-    joke: async () => {
-        const d = await (await fetch("https://v2.jokeapi.dev/joke/Any?type=single")).json();
-        return { text: d.joke };
-    },
-    advice: async () => {
-        const d = JSON.parse(await (await fetch("https://api.adviceslip.com/advice")).text());
-        return { text: d.slip.advice };
-    },
-    bored: async () => {
-        const d = await (await fetch("https://www.boredapi.com/api/activity")).json();
-        return { text: d.activity };
+    country: async (name) => {
+        const res = await fetch(`https://restcountries.com/v3.1/name/${name}`);
+        const d = await res.json();
+        return { text: `${d[0].name.common}, Capital: ${d[0].capital}`, image: d[0].flags?.svg };
     }
 };
 
@@ -124,142 +106,136 @@ function parseToolAction(text) {
 }
 
 // ==========================================
-// 4. LOGIC (ReAct Loop)
+// 4. LOGIC
 // ==========================================
 
 function smartScroll() {
     messagesArea.scrollTop = messagesArea.scrollHeight;
 }
 
-function createMessageUI(title) {
+function createMessageDiv() {
     const msgDiv = document.createElement('div');
     msgDiv.className = 'message assistant';
     
-    const panel = document.createElement('div');
-    panel.className = 'agent-panel open';
-    panel.innerHTML = `<div class="agent-header"><span>${title}</span><small style="opacity:0.5">▼</small></div><div class="agent-body">Processing...</div>`;
-    panel.querySelector('.agent-header').onclick = () => panel.classList.toggle('open');
-
+    const status = document.createElement('div');
+    status.className = 'agent-status';
+    status.innerHTML = `<span class="agent-status-dot"></span><span class="status-text">Thinking...</span>`;
+    
     const content = document.createElement('div');
     content.className = 'assistant-content';
 
-    msgDiv.appendChild(panel);
+    msgDiv.appendChild(status);
     msgDiv.appendChild(content);
     messagesArea.appendChild(msgDiv);
     smartScroll();
     
-    return { msgDiv, content, panel };
+    return { msgDiv, content, status };
 }
 
 async function runAgentLoop(query) {
-    const { msgDiv, content, panel } = createMessageUI("⚡ Agent (DeepSeek)");
-    const status = panel.querySelector('span');
-    const body = panel.querySelector('.agent-body');
+    const { msgDiv, content, status } = createMessageDiv();
+    const statusText = status.querySelector('.status-text');
 
     try {
-        const messages = [
-            { role: "system", content: AGENT_PROMPT },
-            ...conversationHistory
+        // --- STEP 1: Routing Decision ---
+        statusText.textContent = "Routing...";
+        
+        const routerMessages = [
+            { role: "system", content: ROUTER_PROMPT },
+            { role: "user", content: query }
         ];
 
-        if (currentImageBase64) {
-            messages.push({ role: "user", content: `[Image Uploaded] ${query}. (Process description).` });
-        } else {
-            messages.push({ role: "user", content: query });
-        }
+        const routerCompletion = await agentEngine.chat.completions.create({
+            messages: routerMessages, temperature: 0.0, max_tokens: 50
+        });
 
-        let loops = 0;
-        let finalResponse = "";
+        const decision = routerCompletion.choices[0].message.content.trim();
         
-        while (loops < 3) {
-            status.textContent = loops === 0 ? "⚡ Agent Reasoning..." : "🔧 Using Tool...";
+        // --- STEP 2: Execution ---
+
+        // CASE A: Complex -> Core
+        if (decision.startsWith("COMPLEX")) {
+            statusText.textContent = "Processing (Core)...";
             
-            const completion = await agentEngine.chat.completions.create({
-                messages: messages,
-                temperature: 0.7,
-                repetition_penalty: 1.1,
-                stream: true
+            const coreMessages = [
+                { role: "system", content: CORE_PROMPT },
+                ...conversationHistory,
+                { role: "user", content: query }
+            ];
+
+            const stream = await coreEngine.chat.completions.create({
+                messages: coreMessages, temperature: 0.7, stream: true
             });
 
-            let currentChunk = "";
-            for await (const chunk of completion) {
+            let fullText = "";
+            for await (const chunk of stream) {
                 if (!isGenerating) break;
                 const delta = chunk.choices[0].delta.content;
                 if (delta) {
-                    currentChunk += delta;
-                    body.textContent = currentChunk;
-                    parseAndRender(currentChunk, content);
+                    fullText += delta;
+                    parseAndRender(fullText, content);
                     smartScroll();
                 }
             }
             
-            // Case A: Route to Core (Smart Model)
-            if (currentChunk.includes("[ROUTE_TO_CORE]")) {
-                status.textContent = "🧠 Routing to Core...";
-                body.textContent += "\n\n-> Handing off to Core Model...";
-                
-                // Load Core Engine if not loaded (should be loaded by init, but safety check)
-                if (!coreEngine) {
-                     content.innerHTML += `<div class="tool-result">Core Engine not ready. Please wait...</div>`;
-                     // We could await loading here, but init() handles it now.
-                     return; 
-                }
-
-                const coreMessages = [
-                    { role: "system", content: CORE_PROMPT },
+            conversationHistory.push({ role: "user", content: query });
+            conversationHistory.push({ role: "assistant", content: fullText });
+        } 
+        // CASE B: Simple -> Agent
+        else {
+            statusText.textContent = "Processing (Agent)...";
+            
+            let answerText = decision.replace("SIMPLE:", "").trim();
+            
+            // If router gave no answer, just classification, run agent properly
+            if (!answerText || answerText.length < 2) {
+                 const agentMessages = [
+                    { role: "system", content: SIMPLE_TASK_PROMPT },
                     ...conversationHistory,
-                    { role: "user", content: query } // Send original query
+                    { role: "user", content: query }
                 ];
 
-                const coreUI = createMessageUI("🧠 Core (Llama-3 8B)");
-                const coreContent = coreUI.content;
-                const coreBody = coreUI.panel.querySelector('.agent-body');
-
-                const coreStream = await coreEngine.chat.completions.create({
-                    messages: coreMessages, temperature: 0.7, stream: true
+                const completion = await agentEngine.chat.completions.create({
+                    messages: agentMessages, temperature: 0.7, stream: true
                 });
 
-                let coreText = "";
-                for await (const chunk of coreStream) {
+                let currentChunk = "";
+                for await (const chunk of completion) {
                     if (!isGenerating) break;
                     const delta = chunk.choices[0].delta.content;
                     if (delta) {
-                        coreText += delta;
-                        coreBody.textContent = coreText;
-                        parseAndRender(coreText, coreContent);
+                        currentChunk += delta;
+                        parseAndRender(currentChunk, content);
                         smartScroll();
                     }
                 }
-                
-                conversationHistory.push({ role: "user", content: query });
-                conversationHistory.push({ role: "assistant", content: coreText });
-                return;
-            }
-
-            // Case B: Needs Tools
-            const toolCall = parseToolAction(currentChunk);
-            if (toolCall) {
-                status.textContent = "🔧 Using Tool...";
-                let toolResult;
-                if (Tools[toolCall.name]) toolResult = await Tools[toolCall.name](toolCall.args);
-                else toolResult = { text: "Unknown tool" };
-
-                content.innerHTML += `<div class="tool-result"><b>Tool Result:</b> ${toolResult.text}</div>`;
-                
-                messages.push({ role: "assistant", content: currentChunk });
-                messages.push({ role: "user", content: `OBSERVATION: ${JSON.stringify(toolResult.text)}. Now answer.` });
-                loops++;
+                answerText = currentChunk;
             } else {
-                finalResponse = currentChunk;
-                break;
+                parseAndRender(answerText, content);
             }
+
+            // Tool Check
+            const toolCall = parseToolAction(answerText);
+            if (toolCall) {
+                statusText.textContent = "Fetching Data...";
+                let toolResult = { text: "Error" };
+                if (Tools[toolCall.name]) toolResult = await Tools[toolCall.name](toolCall.args);
+                
+                let resultHtml = `<div class="tool-result"><b>Result:</b> ${toolResult.text}</div>`;
+                if (toolResult.image) resultHtml += `<img src="${toolResult.image}" alt="Image">`;
+                
+                content.innerHTML += resultHtml;
+                answerText += ` [Tool Used: ${toolResult.text}]`;
+            }
+
+            conversationHistory.push({ role: "user", content: query });
+            conversationHistory.push({ role: "assistant", content: answerText });
         }
 
-        conversationHistory.push({ role: "user", content: query });
-        conversationHistory.push({ role: "assistant", content: finalResponse });
+        status.style.display = 'none';
 
     } catch (e) {
-        if(content) content.innerHTML += `<span style="color:red">Error: ${e.message}</span>`;
+        content.innerHTML += `<span style="color:red">Error: ${e.message}</span>`;
     } finally {
         isGenerating = false;
         sendBtn.classList.remove('stop-btn');
@@ -272,7 +248,6 @@ async function runAgentLoop(query) {
 // ==========================================
 function parseAndRender(text, container) {
     let html = text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-    html = html.replace(/&lt;think&gt;[\s\S]*?&lt;\/think&gt;/g, ''); 
     
     html = html.replace(/```(\w+)?\n([\s\S]*?)```/g, (m, lang, code) => 
         `<div class="code-block"><div class="code-header"><span>${lang||'code'}</span><button class="copy-btn" onclick="copyCode(this)">Copy</button></div><div class="code-body"><pre>${code}</pre></div></div>`
@@ -287,7 +262,7 @@ window.copyCode = (btn) => {
 };
 
 // ==========================================
-// 6. INITIALIZATION (Sequential Download)
+// 6. INITIALIZATION
 // ==========================================
 function showError(t, e) { 
     debugLog.style.display = 'block'; 
@@ -298,52 +273,36 @@ function showError(t, e) {
 async function init() {
     try {
         loadingLabel.textContent = "Checking WebGPU...";
-        if (!navigator.gpu) throw new Error("WebGPU not supported. Use Chrome.");
+        if (!navigator.gpu) throw new Error("WebGPU not supported.");
 
         modelStatusContainer.innerHTML = `
           <div class="model-card" id="card-agent">
-            <div class="model-card-name">${AGENT_MODEL.name}</div>
+            <div class="model-card-name">${AGENT_MODEL.name} (Router)</div>
             <div class="model-card-desc" id="status-agent">Waiting...</div>
           </div>
           <div class="model-card" id="card-core">
-            <div class="model-card-name">${CORE_MODEL.name}</div>
+            <div class="model-card-name">${CORE_MODEL.name} (Brain)</div>
             <div class="model-card-desc" id="status-core">Queued...</div>
           </div>
         `;
 
-        // --- 1. Load Agent (DeepSeek R1) ---
-        loadingLabel.textContent = `Loading Agent (DeepSeek R1)...`;
-        try {
-            agentEngine = await webllm.CreateMLCEngine(AGENT_MODEL.id, {
-                initProgressCallback: (report) => {
-                    const p = Math.round(report.progress * 100);
-                    // Fill 0% to 50% of the total bar
-                    sliderFill.style.width = `${p / 2}%`;
-                    loadingPercent.textContent = `${p}%`;
-                    document.getElementById('status-agent').textContent = report.text;
-                }
-            });
-        } catch (err) {
-            // Fallback if DeepSeek ID is not found
-            console.warn("DeepSeek R1 ID not found, falling back to Qwen2.5 Base Model.");
-            document.getElementById('status-agent').textContent = "Fallback (Qwen)";
-            agentEngine = await webllm.CreateMLCEngine(AGENT_MODEL.fallback_id, {
-                initProgressCallback: (report) => {
-                    const p = Math.round(report.progress * 100);
-                    sliderFill.style.width = `${p / 2}%`;
-                    loadingPercent.textContent = `${p}%`;
-                    document.getElementById('status-agent').textContent = report.text;
-                }
-            });
-        }
+        // 1. Load Agent
+        loadingLabel.textContent = `Loading Agent...`;
+        agentEngine = await webllm.CreateMLCEngine(AGENT_MODEL.id, {
+            initProgressCallback: (report) => {
+                const p = Math.round(report.progress * 100);
+                sliderFill.style.width = `${p / 2}%`;
+                loadingPercent.textContent = `${p}%`;
+                document.getElementById('status-agent').textContent = report.text;
+            }
+        });
         document.getElementById('status-agent').textContent = "Ready";
 
-        // --- 2. Load Core (Llama-3 8B) ---
-        loadingLabel.textContent = `Loading Core (Llama-3 8B)...`;
+        // 2. Load Core
+        loadingLabel.textContent = `Loading Core...`;
         coreEngine = await webllm.CreateMLCEngine(CORE_MODEL.id, {
             initProgressCallback: (report) => {
                 const p = Math.round(report.progress * 100);
-                // Fill 50% to 100% of the total bar
                 sliderFill.style.width = `${50 + (p / 2)}%`;
                 loadingPercent.textContent = `${p}%`;
                 document.getElementById('status-core').textContent = report.text;
@@ -366,19 +325,6 @@ async function init() {
 // ==========================================
 // 7. EVENTS
 // ==========================================
-uploadBtn.onclick = () => imageInput.click();
-imageInput.onchange = (e) => {
-    const file = e.target.files[0];
-    if(!file) return;
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-        currentImageBase64 = ev.target.result.split(',')[1];
-        imagePreview.src = ev.target.result;
-        imagePreviewContainer.classList.add('active');
-    };
-    reader.readAsDataURL(file);
-};
-removeImageBtn.onclick = () => { currentImageBase64 = null; imagePreviewContainer.classList.remove('active'); imageInput.value = ''; };
 
 async function handleAction() {
     if (isGenerating) {
@@ -390,15 +336,13 @@ async function handleAction() {
     }
 
     const text = inputText.value.trim();
-    if (!text && !currentImageBase64) return;
+    if (!text) return;
 
     const userMsg = document.createElement('div');
     userMsg.className = 'message user';
     userMsg.innerHTML = `<div class="user-bubble">${text}</div>`;
     messagesArea.appendChild(userMsg);
 
-    const query = text || "Process this.";
-    
     inputText.value = '';
     inputText.style.height = 'auto';
 
@@ -407,10 +351,7 @@ async function handleAction() {
     sendBtn.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"></rect></svg>`;
     
     smartScroll();
-    await runAgentLoop(query);
-    
-    currentImageBase64 = null;
-    imagePreviewContainer.classList.remove('active');
+    await runAgentLoop(text);
 }
 
 inputText.oninput = function() { this.style.height = 'auto'; this.style.height = Math.min(this.scrollHeight, 100) + 'px'; };
