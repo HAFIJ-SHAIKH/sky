@@ -1,20 +1,15 @@
 import * as webllm from "https://esm.run/@mlc-ai/web-llm";
-import { StateGraph, END } from "@langchain/langgraph";
-import { HumanMessage, AIMessage, SystemMessage } from "@langchain/core/messages";
+import { StateGraph, END } from "https://esm.run/@langchain/langgraph";
+import { HumanMessage, AIMessage } from "https://esm.run/@langchain/core/messages";
 
 // ==========================================
 // 1. CONFIGURATION
 // ==========================================
 const OPENSKY_CONFIG = {
     agent_name: "Opensky",
-    creator: "Hafij Shaikh",
-    version: "12.0.0" // LangGraph Architecture
+    creator: "Hafij Shaikh"
 };
 
-const MAX_HISTORY = 20; 
-
-// --- ADVANCED SYSTEM PROMPT ---
-// Agent identity is injected here
 const SYSTEM_PROMPT = `
 You are ${OPENSKY_CONFIG.agent_name}, created by ${OPENSKY_CONFIG.creator}. 
 You are an intelligent agent with access to tools and data visualization.
@@ -24,13 +19,12 @@ CAPABILITIES:
    Format: ACTION: tool_name ARGS: value
 2. Graphs: You can create graphs using Chart.js. 
    Format: \`\`\`chart { "type": "bar", "data": {...} }
-3. OCR: You can read text from uploaded images using Tesseract.
+3. OCR: You can read text from uploaded images.
 
 RULES:
 - Be concise. Do not repeat yourself.
 - If asked for a list, give exactly what is asked.
 - If you need data to answer a question, USE A TOOL. Do not guess.
-- Never say "I can't create graphs" or "I don't have access". You DO have access.
 
 TOOLS AVAILABLE:
 wiki(topic), weather(city), define(word), country(name), pokemon(name), joke(), advice(), bored(), ocr(image).
@@ -39,10 +33,7 @@ wiki(topic), weather(city), define(word), country(name), pokemon(name), joke(), 
 const MODEL_CONFIG = {
     id: "Phi-3.5-mini-instruct-q4f16_1-MLC",
     name: "Phi-3.5 Mini",
-    options: {
-        temperature: 0.7,
-        repetition_penalty: 1.1
-    }
+    options: { temperature: 0.7, repetition_penalty: 1.1 }
 };
 
 // ==========================================
@@ -69,7 +60,7 @@ let isGenerating = false;
 let currentImageBase64 = null; 
 
 // ==========================================
-// 3. TOOLS & OCR
+// 3. TOOLS
 // ==========================================
 const Tools = {
     wiki: async (q) => {
@@ -118,7 +109,6 @@ const Tools = {
     },
     ocr: async (base64) => {
         try {
-            // Ensure Tesseract is loaded
             const result = await Tesseract.recognize(`data:image/jpeg;base64,${base64}`, 'eng', { logger: m => console.log(m) });
             return { text: result.data.text || "No text found." };
         } catch(e) {
@@ -128,45 +118,35 @@ const Tools = {
 };
 
 // ==========================================
-// 4. LANGGRAPH DEFINITION
+// 4. LANGGRAPH LOGIC
 // ==========================================
-
-// Helper: Parse tool action from text
 function parseToolAction(text) {
     const match = text.match(/ACTION:\s*(\w+)\s*ARGS:\s*([^\n]+)/i);
     if (!match) return null;
     return { name: match[1].toLowerCase(), args: match[2].trim() };
 }
 
-// Define Agent State
 const agentState = {
     messages: { value: (x, y) => x.concat(y), default: () => [] },
     imageData: { value: (x, y) => y ?? x, default: () => null }
 };
 
-// NODE 1: Agent Brain (Calls WebLLM)
 async function agentNode(state) {
     const history = state.messages;
-    
-    // Construct messages for WebLLM
     const messages = [
         { role: "system", content: SYSTEM_PROMPT },
         ...history.map(m => ({ role: m._getType(), content: m.content }))
     ];
 
-    // UI Preparation: Create message container
-    // Note: We access DOM directly for streaming effect
+    // UI: Create Message Container
     const msgDiv = document.createElement('div');
     msgDiv.className = 'message assistant';
-    
     const panel = document.createElement('div');
     panel.className = 'agent-panel open';
     panel.innerHTML = `<div class="agent-header"><span>🧠 Thinking...</span></div><div class="agent-body"></div>`;
     panel.querySelector('.agent-header').onclick = () => panel.classList.toggle('open');
-    
     const content = document.createElement('div');
     content.className = 'assistant-content';
-    
     msgDiv.appendChild(panel);
     msgDiv.appendChild(content);
     messagesArea.appendChild(msgDiv);
@@ -174,11 +154,10 @@ async function agentNode(state) {
 
     const status = panel.querySelector('span');
     const body = panel.querySelector('.agent-body');
-
-    // Streaming Loop
     let fullText = "";
     status.textContent = "⚡ Processing...";
-    
+
+    // Stream LLM Output
     const completion = await engine.chat.completions.create({
         messages: messages,
         temperature: MODEL_CONFIG.options.temperature,
@@ -187,45 +166,36 @@ async function agentNode(state) {
     });
 
     for await (const chunk of completion) {
-        if (!isGenerating) break; // Stop button check
+        if (!isGenerating) break;
         const delta = chunk.choices[0].delta.content;
         if (delta) {
             fullText += delta;
-            body.textContent = fullText; // Live thoughts
-            parseAndRender(fullText, content); // Live preview
+            body.textContent = fullText;
+            parseAndRender(fullText, content);
             smartScroll();
         }
     }
-
     status.textContent = "✅ Done";
-    
-    // Return AI Message to Graph
-    return { messages: [new AIMessage(fullText)], imageData: null }; // Clear image data after use
+    return { messages: [new AIMessage(fullText)], imageData: null };
 }
 
-// NODE 2: Tool Executor
 async function toolNode(state) {
     const lastMessage = state.messages[state.messages.length - 1];
     const text = lastMessage.content;
-    
     const toolCall = parseToolAction(text);
+    
     if (!toolCall) return { messages: [new HumanMessage("Error: Tool format not recognized.")] };
 
     let result;
-    
-    // Handle OCR with State Image
     if (toolCall.name === 'ocr' && state.imageData) {
         result = await Tools.ocr(state.imageData);
-    } 
-    // Handle Standard Tools
-    else if (Tools[toolCall.name]) {
+    } else if (Tools[toolCall.name]) {
         result = await Tools[toolCall.name](toolCall.args);
-    } 
-    else {
+    } else {
         result = { text: `Unknown tool: ${toolCall.name}` };
     }
 
-    // Render Tool Result in UI
+    // UI: Render Tool Result
     const lastMsgDiv = messagesArea.lastChild;
     const contentDiv = lastMsgDiv.querySelector('.assistant-content');
     if (contentDiv) {
@@ -235,13 +205,9 @@ async function toolNode(state) {
         contentDiv.innerHTML += toolHtml;
     }
 
-    // Return Observation to Graph
-    return { 
-        messages: [new HumanMessage(`OBSERVATION: ${JSON.stringify(result.text)}. Now answer the user.`)] 
-    };
+    return { messages: [new HumanMessage(`OBSERVATION: ${JSON.stringify(result.text)}. Now answer the user.`)] };
 }
 
-// EDGE: Should we continue?
 function shouldContinue(state) {
     const lastMessage = state.messages[state.messages.length - 1];
     if (lastMessage._getType() === 'ai' && lastMessage.content.includes("ACTION:")) {
@@ -250,20 +216,14 @@ function shouldContinue(state) {
     return END;
 }
 
-// Build Graph
-let workflow;
 let app;
-
 async function initGraph() {
-    workflow = new StateGraph({ channels: agentState });
-    
+    const workflow = new StateGraph({ channels: agentState });
     workflow.addNode("agent", agentNode);
     workflow.addNode("tools", toolNode);
-    
     workflow.setEntryPoint("agent");
     workflow.addConditionalEdges("agent", shouldContinue);
     workflow.addEdge("tools", "agent");
-    
     app = workflow.compile();
 }
 
@@ -286,6 +246,7 @@ async function init() {
 
         loadingLabel.textContent = `Loading ${MODEL_CONFIG.name}...`;
         
+        // THIS TRIGGERS THE DOWNLOAD
         engine = await webllm.CreateMLCEngine(MODEL_CONFIG.id, {
             initProgressCallback: (report) => {
                 const p = Math.round(report.progress * 100);
@@ -295,7 +256,6 @@ async function init() {
             }
         });
 
-        // Initialize LangGraph
         await initGraph();
 
         loadingLabel.textContent = "Ready.";
@@ -308,7 +268,7 @@ async function init() {
 }
 
 // ==========================================
-// 6. RENDERER
+// 6. RENDERER & EVENTS
 // ==========================================
 function smartScroll() {
     const near = messagesArea.scrollHeight - messagesArea.scrollTop - messagesArea.clientHeight < 100;
@@ -317,8 +277,7 @@ function smartScroll() {
 
 function parseAndRender(text, container) {
     let html = text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-
-    // 1. Chart.js Support
+    // Chart
     html = html.replace(/```chart\s*([\s\S]*?)```/g, (match, json) => {
         try {
             const data = JSON.parse(json);
@@ -326,19 +285,15 @@ function parseAndRender(text, container) {
             setTimeout(() => {
                 const el = document.getElementById(id);
                 if(el) new Chart(el, { type: data.type || 'bar', data: data.data, options: { responsive: true, maintainAspectRatio: false } });
-            }, 100);
+            }, 50);
             return `<div class="chart-container"><canvas id="${id}"></canvas></div>`;
-        } catch(e) {
-            return `<div style="color:red">Invalid Chart JSON</div>`;
-        }
+        } catch(e) { return `<div style="color:red">Chart Error</div>`; }
     });
-
-    // 2. Code
+    // Code
     html = html.replace(/```(\w+)?\n([\s\S]*?)```/g, (m, lang, code) => 
         `<div class="code-block"><div class="code-header"><span>${lang||'code'}</span><button class="copy-btn" onclick="copyCode(this)">Copy</button></div><div class="code-body"><pre>${code}</pre></div></div>`
     );
-
-    // 3. Table
+    // Table
     if (html.includes('|')) {
         const tReg = /^\|(.+)\|\s*\n\|[-:\s|]+\|\s*\n((?:\|.+\|\s*\n?)+)/gm;
         html = html.replace(tReg, (m, h, b) => {
@@ -347,13 +302,9 @@ function parseAndRender(text, container) {
             return `<table><thead><tr>${th}</tr></thead><tbody>${tr}</tbody></table>`;
         });
     }
-
     container.innerHTML = html.replace(/\n/g, '<br>');
 }
 
-// ==========================================
-// 7. EVENTS
-// ==========================================
 window.copyCode = (btn) => {
     navigator.clipboard.writeText(btn.closest('.code-block').querySelector('pre').textContent);
     btn.textContent = 'Copied';
@@ -384,51 +335,36 @@ async function handleAction() {
 
     const text = inputText.value.trim();
     const hasImage = !!currentImageBase64;
-    
     if (!text && !hasImage) return;
 
-    // 1. User Message UI
     const userMsg = document.createElement('div');
     userMsg.className = 'message user';
-    let bubble = `<div class="user-bubble">${text}`;
-    if (hasImage) bubble += `<img src="data:image/jpeg;base64,${currentImageBase64}">`;
-    bubble += `</div>`;
-    userMsg.innerHTML = bubble;
+    userMsg.innerHTML = `<div class="user-bubble">${text}${hasImage ? `<img src="data:image/jpeg;base64,${currentImageBase64}">` : ''}</div>`;
     messagesArea.appendChild(userMsg);
 
-    // 2. Prepare Input
     const userInput = text || "Read this image.";
-    const inputWithHint = hasImage ? `[Image Uploaded] ${userInput}. Use ACTION: ocr ARGS: image to read text if needed.` : userInput;
+    const inputWithHint = hasImage ? `[Image Uploaded] ${userInput}. Use ACTION: ocr ARGS: image.` : userInput;
 
     inputText.value = '';
     inputText.style.height = 'auto';
     
-    // IMPORTANT: Clear UI image, but keep base64 in variable for the graph
     const imageForGraph = currentImageBase64;
     currentImageBase64 = null;
     imagePreviewContainer.classList.remove('active');
     imageInput.value = '';
 
-    // 3. Run Graph
     isGenerating = true;
     sendBtn.classList.add('stop-btn');
     sendBtn.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"></rect></svg>`;
-    
     smartScroll();
 
     try {
-        // Stream the graph execution
-        // We pass the image in the state
         const stream = await app.stream({ messages: [new HumanMessage(inputWithHint)], imageData: imageForGraph });
-        
         for await (const event of stream) {
             if (!isGenerating) break;
-            // The nodes handle their own UI updates (agentNode streams text)
-            console.log("Graph Event:", event);
         }
     } catch (e) {
         console.error(e);
-        // Error UI handling
     } finally {
         isGenerating = false;
         sendBtn.classList.remove('stop-btn');
