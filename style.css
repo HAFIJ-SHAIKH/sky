@@ -41,7 +41,7 @@ body {
 
 .chat-area { flex: 1; min-height: 0; overflow-y: auto; padding: 1.5rem; display: flex; flex-direction: column; gap: 1.5rem; }
 
-.message { display: flex; flex-direction: column; gap: 0.5rem; animation: fadeUp 0.3s ease; }
+.message { display: flex; flex-direction: column; gap: 0.5rem; animation: fadeUp 0.3s ease; width: 100%; }
 @keyframes fadeUp { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
 
 .message.user { align-items: flex-end; }
@@ -50,33 +50,108 @@ body {
 }
 .user-bubble img { max-width: 100%; border-radius: 8px; margin-top: 0.5rem; display: block; }
 
-.message.assistant { align-items: flex-start; width: 100%; }
+.message.assistant { align-items: flex-start; }
 .assistant-content { background: transparent; padding: 0; max-width: 90%; font-size: 0.95rem; line-height: 1.6; width: 100%; }
 
-/* Tags for Task Mode */
-.tag-header { font-weight: 700; color: #1e293b; margin-top: 0.75rem; margin-bottom: 0.25rem; font-size: 0.85rem; display: block; border-bottom: 1px solid #e5e7eb; padding-bottom: 2px; }
-.tag-analysis { color: #6366f1; border-color: #6366f1; }
-.tag-execution { color: #10b981; border-color: #10b981; }
-.tag-resolved { color: #f59e0b; border-color: #f59e0b; }
-.tag-next { color: #3b82f6; border-color: #3b82f6; }
-
-/* Routing Badge */
-.routing-badge {
-  font-size: 0.65rem;
-  background: #f3f4f6;
-  color: #6b7280;
-  padding: 2px 6px;
-  border-radius: 4px;
+/* Agent Panel (Accordion) */
+.agent-panel {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
   margin-bottom: 0.5rem;
-  display: inline-block;
+  overflow: hidden;
+  font-size: 0.8rem;
+  width: 100%;
+}
+.agent-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.5rem 0.75rem;
+  cursor: pointer;
+  background: #f1f5f9;
+  border-bottom: 1px solid #e2e8f0;
+}
+.agent-header span { font-weight: 600; color: #475569; }
+.agent-body {
+  padding: 0.75rem;
   font-family: 'JetBrains Mono', monospace;
+  font-size: 0.7rem;
+  color: #64748b;
+  white-space: pre-wrap;
+  display: none;
+}
+.agent-panel.open .agent-body { display: block; }
+.agent-panel.open .arrow { transform: rotate(180deg); }
+
+/* Markdown Tables */
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0.5rem 0;
+  font-size: 0.85rem;
+}
+th, td {
+  border: 1px solid var(--border);
+  padding: 0.5rem;
+  text-align: left;
+}
+th {
+  background: #f1f5f9;
+  font-weight: 600;
 }
 
-.code-block { background: #1e293b; border-radius: 8px; margin: 0.5rem 0; overflow: hidden; width: 100%; max-width: 90%; }
-.code-header { display: flex; justify-content: space-between; align-items: center; padding: 0.5rem 0.75rem; background: #334155; font-size: 0.7rem; color: #94a3b8; }
-.copy-btn { background: #475569; border: none; border-radius: 4px; font-size: 0.65rem; padding: 2px 6px; cursor: pointer; color: white; }
+/* Code Blocks */
+.code-block {
+  background: #1e293b;
+  border-radius: 8px;
+  margin: 0.5rem 0;
+  overflow: hidden;
+  width: 100%;
+}
+.code-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.5rem 0.75rem;
+  background: #334155;
+  font-size: 0.7rem;
+  color: #94a3b8;
+}
+.copy-btn {
+  background: #475569;
+  border: none;
+  border-radius: 4px;
+  font-size: 0.65rem;
+  padding: 2px 6px;
+  cursor: pointer;
+  color: white;
+  transition: all 0.2s;
+}
 .copy-btn:hover { background: white; color: #1e293b; }
-.code-body { padding: 0.75rem; font-family: 'JetBrains Mono', monospace; font-size: 0.8rem; overflow-x: auto; color: #e2e8f0; }
+.code-body {
+  padding: 0.75rem;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.8rem;
+  overflow-x: auto;
+  color: #e2e8f0;
+}
+
+/* Mode Badges */
+.mode-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  margin-bottom: 0.5rem;
+  background: #e0e7ff;
+  color: #4338ca;
+}
+.mode-badge.task {
+  background: #fef3c7;
+  color: #d97706;
+}
 
 .input-area { padding: 1rem 1.5rem; background: var(--bg-card); border-top: 1px solid var(--border); flex-shrink: 0; position: relative; z-index: 10; }
 .image-preview-container { display: none; margin-bottom: 0.5rem; position: relative; width: 100px; }
