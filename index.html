@@ -22,14 +22,14 @@
   <div class="loading-screen" id="loadingScreen">
     <div class="loader-content">
       
-      <!-- Your Custom Energy Vertex Logo -->
+      <!-- Your Specific Logo SVG -->
       <div class="logo-container">
         <svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
           <g transform="translate(100,100)">
             <path d="M-60,0 A60,30 0 1,1 60,0 A60,60 0 1,1 -60,0" fill="none" stroke="black" stroke-width="1.5" />
-            <path d="M-50,5 A50,25 10 1,1 50,-5 A50,50 0 1,1 -50,5" fill="none" stroke="black" stroke-width="1" opacity="0.8"/>
-            <path d="M-40,10 A40,20 20 1,1 40,-10 A40,40 0 1,1 -40,10" fill="none" stroke="black" stroke-width="0.8" opacity="0.6"/>
-            <path d="M-30,15 A30,15 30 1,1 30,-15 A30,30 0 1,1 -30,15" fill="none" stroke="black" stroke-width="0.5" opacity="0.4"/>
+            <path d="M-50,5 A50,25 10 1,1 50,-5 A50,50 0 1,1 -50,5" fill="none" stroke="black" stroke-width="1" opacity="0.8" />
+            <path d="M-40,10 A40,20 20 1,1 40,-10 A40,40 0 1,1 -40,10" fill="none" stroke="black" stroke-width="0.8" opacity="0.6" />
+            <path d="M-30,15 A30,15 30 1,1 30,-15 A30,30 0 1,1 -30,15" fill="none" stroke="black" stroke-width="0.5" opacity="0.4" />
             <circle cx="0" cy="0" r="4" fill="black" />
             <circle cx="0" cy="0" r="80" fill="none" stroke="black" stroke-width="0.2" stroke-dasharray="2,4" />
             <circle cx="0" cy="0" r="95" fill="none" stroke="black" stroke-width="0.1" />
@@ -46,23 +46,21 @@
       <div class="progress-stats"><span id="loadingPercent">0%</span></div>
       
       <div id="modelStatusContainer" class="model-status-container"></div>
-      
-      <!-- Debug Log visible by default for troubleshooting -->
-      <div id="debugLog" style="display:none; margin-top:15px;"></div>
+      <div id="debugLog"></div>
     </div>
   </div>
 
-  <!-- Main App Container -->
+  <!-- App Container -->
   <div class="app-container" id="chatContainer">
     
     <header class="app-header">
       <div class="app-logo">
-        <!-- Small Logo for Header -->
-        <svg width="20" height="20" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
-           <g transform="translate(100,100)">
-            <path d="M-60,0 A60,30 0 1,1 60,0 A60,60 0 1,1 -60,0" fill="none" stroke="black" stroke-width="12" />
-            <circle cx="0" cy="0" r="20" fill="black" />
-          </g>
+        <!-- Inline SVG for Header Icon -->
+        <svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
+           <g transform="translate(100,100) scale(0.1)">
+             <path d="M-60,0 A60,30 0 1,1 60,0 A60,60 0 1,1 -60,0" fill="none" stroke="black" stroke-width="15" />
+             <circle cx="0" cy="0" r="30" fill="black" />
+           </g>
         </svg>
         <span>Opensky</span>
       </div>
@@ -98,6 +96,7 @@
     </footer>
   </div>
 
+  <!-- Logic -->
   <script type="module" src="script.js"></script>
 </body>
 </html>
