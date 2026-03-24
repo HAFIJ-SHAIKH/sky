@@ -10,9 +10,6 @@ const OPENSKY_CONFIG = {
     creator: "Hafij Shaikh"
 };
 
-// Models Configuration
-// Note: Llama-3-8B is large (approx 5GB-6GB VRAM). 
-// If your device cannot handle it, stick to Phi-3.5 for both or use a smaller worker.
 const ROUTER_CONFIG = {
     id: "Phi-3.5-mini-instruct-q4f16_1-MLC", 
     name: "Phi-3.5 Mini",
@@ -20,31 +17,26 @@ const ROUTER_CONFIG = {
 };
 
 const WORKER_CONFIG = {
-    id: "Llama-3-8B-Instruct-q4f16_1-MLC", // Ensure your device can run this!
+    id: "Llama-3-8B-Instruct-q4f16_1-MLC",
     name: "Llama-3 8B",
     role: "Worker"
 };
 
 const ROUTER_PROMPT = `
 You are ${OPENSKY_CONFIG.agent_name}, created by ${OPENSKY_CONFIG.creator}.
-You are a fast, efficient AI assistant.
-
-RULES:
-1. If the task is complex (coding, math, reasoning), output exactly: [ROUTE_TO_WORKER]
-2. Otherwise, respond conversationally and help the user.
-3. To use tools, output: ACTION: tool_name ARGS: value
-
-TOOLS AVAILABLE:
-wiki(topic), weather(city), define(word), country(name), pokemon(name), joke(), advice(), bored(), ocr(image).
+1. If the task is complex (coding, math), output exactly: [ROUTE_TO_WORKER]
+2. Otherwise, respond conversationally.
+3. To use tools: ACTION: tool_name ARGS: value
+Tools: wiki(topic), weather(city), define(word), country(name), pokemon(name), joke(), advice(), bored(), ocr(image).
 `;
 
 const WORKER_PROMPT = `
 You are the Advanced Intelligence Core of ${OPENSKY_CONFIG.agent_name}, created by ${OPENSKY_CONFIG.creator}.
-You are brilliant at coding, math, and creative writing. Be detailed and helpful.
+You are brilliant at coding, math, and creative writing. Be detailed.
 `;
 
 // ==========================================
-// 2. DOM & STATE
+// 2. DOM
 // ==========================================
 const loadingScreen = document.getElementById('loadingScreen');
 const chatContainer = document.getElementById('chatContainer');
@@ -68,7 +60,7 @@ let isGenerating = false;
 let currentImageBase64 = null; 
 
 // ==========================================
-// 3. TOOLS (FIXED SYNTAX)
+// 3. TOOLS (Fixed Logic)
 // ==========================================
 const Tools = {
     wiki: async (q) => {
@@ -112,27 +104,33 @@ const Tools = {
         const d = await (await fetch("https://www.boredapi.com/api/activity")).json();
         return { text: d.activity };
     },
-    ocr: async () => {
-        if(!currentImageBase64) return { text: "No image" };
+    // FIX: OCR now accepts base64 data as argument
+    ocr: async (base64) => {
+        if(!base64) return { text: "No image provided" };
         try {
-            const res = await Tesseract.recognize(`data:image/jpeg;base64,${currentImageBase64}`, 'eng');
+            const res = await Tesseract.recognize(`data:image/jpeg;base64,${base64}`, 'eng');
             return { text: res.data.text || "No text found" };
         } catch(e) { return { text: "OCR Error" }; }
     }
-}; // <--- FIX: Properly closed the Tools object
+};
+
+function parseToolAction(text) {
+    const match = text.match(/ACTION:\s*(\w+)\s*ARGS:\s*([^\n]+)/i);
+    if (!match) return null;
+    return { name: match[1].toLowerCase(), args: match[2].trim() };
+}
 
 // ==========================================
 // 4. GRAPH NODES
 // ==========================================
 
-// Helper to create UI elements
 function createMessageUI(title) {
     const msgDiv = document.createElement('div');
     msgDiv.className = 'message assistant';
     
     const panel = document.createElement('div');
-    panel.className = 'agent-panel open';
-    panel.innerHTML = `<div class="agent-header"><span>${title}</span></div><div class="agent-body">Thinking...</div>`;
+    panel.className = 'agent-panel';
+    panel.innerHTML = `<div class="agent-header"><span>${title}</span><small style="margin-left:auto; opacity:0.5">▼</small></div><div class="agent-body">Thinking...</div>`;
     panel.querySelector('.agent-header').onclick = () => panel.classList.toggle('open');
 
     const content = document.createElement('div');
@@ -143,7 +141,7 @@ function createMessageUI(title) {
     messagesArea.appendChild(msgDiv);
     smartScroll();
     
-    return { msgDiv, panel, content };
+    return { msgDiv, content };
 }
 
 async function routerNode(state) {
@@ -186,7 +184,7 @@ async function routerNode(state) {
 async function workerNode(state) {
     const history = state.messages;
     const cleanHistory = history.map(m => {
-        if (m.content.includes("[ROUTE_TO_WORKER]")) return new HumanMessage("Please handle this complex request now.");
+        if (m.content.includes("[ROUTE_TO_WORKER]")) return new HumanMessage("Handle this.");
         return m;
     });
 
@@ -213,7 +211,6 @@ async function workerNode(state) {
             smartScroll();
         }
     }
-    
     return { nextAction: END, messages: [new AIMessage(fullText)] };
 }
 
@@ -227,7 +224,8 @@ async function toolsNode(state) {
     let result = { text: "Tool not found" };
     if (toolCall) {
         const { name, args } = toolCall;
-        if (name === 'ocr') result = await Tools.ocr();
+        // FIX: Pass image data from state to OCR tool
+        if (name === 'ocr') result = await Tools.ocr(state.imageData);
         else if (Tools[name]) result = await Tools[name](args);
     }
 
@@ -237,12 +235,6 @@ async function toolsNode(state) {
         nextAction: "router", 
         messages: [new HumanMessage(`OBSERVATION: ${JSON.stringify(result.text)}. Now answer.`)] 
     };
-}
-
-function parseToolAction(text) {
-    const match = text.match(/ACTION:\s*(\w+)\s*ARGS:\s*([^\n]+)/i);
-    if (!match) return null;
-    return { name: match[1].toLowerCase(), args: match[2].trim() };
 }
 
 function checkNextAction(state) {
@@ -255,12 +247,14 @@ function checkNextAction(state) {
 let app;
 
 async function initGraph() {
-    const agentState = {
+    const agentStateChannels = {
         messages: { value: (x, y) => x.concat(y), default: () => [] },
-        nextAction: { value: (x, y) => y ?? x, default: () => null }
+        nextAction: { value: (x, y) => y ?? x, default: () => null },
+        // Keep imageData persistent through the loop
+        imageData: { value: (x, y) => y ?? x, default: () => null } 
     };
 
-    const workflow = new StateGraph({ channels: agentState });
+    const workflow = new StateGraph({ channels: agentStateChannels });
     
     workflow.addNode("router", routerNode);
     workflow.addNode("worker", workerNode);
@@ -276,7 +270,7 @@ async function initGraph() {
 }
 
 // ==========================================
-// 6. INIT (FIXED LOGIC)
+// 6. INIT
 // ==========================================
 function showError(t, e) { 
     debugLog.style.display = 'block'; 
@@ -286,61 +280,46 @@ function showError(t, e) {
 
 async function init() {
     try {
-        console.log("Script started...");
         loadingLabel.textContent = "Checking WebGPU...";
-        
-        if (!navigator.gpu) {
-            throw new Error("WebGPU not supported. Please use Chrome/Edge.");
-        }
+        if (!navigator.gpu) throw new Error("WebGPU not supported.");
 
         modelStatusContainer.innerHTML = `
-          <div class="model-card">
-            <div class="model-card-name">${ROUTER_CONFIG.name}</div>
-            <div class="model-card-desc" id="router-status">Waiting...</div>
-          </div>
-          <div class="model-card">
-             <div class="model-card-name">${WORKER_CONFIG.name}</div>
-             <div class="model-card-desc" id="worker-status">Queued...</div>
-          </div>
+          <div class="model-card"><div class="model-card-name">${ROUTER_CONFIG.name}</div><div class="model-card-desc" id="router-status">Waiting...</div></div>
+          <div class="model-card"><div class="model-card-name">${WORKER_CONFIG.name}</div><div class="model-card-desc" id="worker-status">Queued...</div></div>
         `;
 
-        // 1. Download Router
-        loadingLabel.textContent = `Step 1: Downloading Router (${ROUTER_CONFIG.name})...`;
-        console.log(`Downloading ${ROUTER_CONFIG.id}...`);
-        
+        // 1. Router
+        loadingLabel.textContent = `Step 1: Downloading Router...`;
         routerEngine = await webllm.CreateMLCEngine(ROUTER_CONFIG.id, {
             initProgressCallback: (report) => {
                 const p = Math.round(report.progress * 100);
                 sliderFill.style.width = `${p}%`;
                 loadingPercent.textContent = `${p}%`;
-                const statusEl = document.getElementById('router-status');
-                if(statusEl) statusEl.textContent = report.text;
+                document.getElementById('router-status').textContent = report.text;
             }
         });
         document.getElementById('router-status').textContent = "Ready";
 
-        // 2. Download Worker
-        loadingLabel.textContent = `Step 2: Downloading Worker (${WORKER_CONFIG.name})...`;
+        // 2. Worker
+        loadingLabel.textContent = `Step 2: Downloading Worker...`;
         sliderFill.style.width = "0%";
         loadingPercent.textContent = "0%";
-        console.log(`Downloading ${WORKER_CONFIG.id}...`);
         
         workerEngine = await webllm.CreateMLCEngine(WORKER_CONFIG.id, {
             initProgressCallback: (report) => {
                 const p = Math.round(report.progress * 100);
                 sliderFill.style.width = `${p}%`;
                 loadingPercent.textContent = `${p}%`;
-                const statusEl = document.getElementById('worker-status');
-                if(statusEl) statusEl.textContent = report.text;
+                document.getElementById('worker-status').textContent = report.text;
             }
         });
         document.getElementById('worker-status').textContent = "Ready";
 
-        // 3. Compile Graph
-        loadingLabel.textContent = "Compiling Agent Graph...";
+        // 3. Compile
+        loadingLabel.textContent = "Compiling Graph...";
         await initGraph();
 
-        loadingLabel.textContent = "System Online.";
+        loadingLabel.textContent = "Ready.";
         setTimeout(() => {
             loadingScreen.classList.add('hidden');
             chatContainer.classList.add('active');
@@ -348,7 +327,7 @@ async function init() {
         }, 500);
 
     } catch (e) { 
-        showError("Initialization Failed", e); 
+        showError("Init Failed", e); 
     }
 }
 
@@ -358,17 +337,6 @@ function smartScroll() {
 
 function parseAndRender(text, container) {
     let html = text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-    html = html.replace(/```chart\s*([\s\S]*?)```/g, (match, json) => {
-        try {
-            const data = JSON.parse(json);
-            const id = 'chart_' + Math.random().toString(36).substr(2, 9);
-            setTimeout(() => {
-                const el = document.getElementById(id);
-                if(el) new Chart(el, { type: data.type || 'bar', data: data.data, options: { responsive: true, maintainAspectRatio: false } });
-            }, 50);
-            return `<div class="chart-container"><canvas id="${id}"></canvas></div>`;
-        } catch(e) { return `<div style="color:red">Chart Error</div>`; }
-    });
     html = html.replace(/```(\w+)?\n([\s\S]*?)```/g, (m, lang, code) => 
         `<div class="code-block"><div class="code-header"><span>${lang||'code'}</span><button class="copy-btn" onclick="copyCode(this)">Copy</button></div><div class="code-body"><pre>${code}</pre></div></div>`
     );
@@ -378,10 +346,9 @@ function parseAndRender(text, container) {
 window.copyCode = (btn) => {
     navigator.clipboard.writeText(btn.closest('.code-block').querySelector('pre').textContent);
     btn.textContent = 'Copied';
-    setTimeout(()=>btn.textContent='Copy', 1000);
 };
 
-// Event Listeners
+// Events
 uploadBtn.onclick = () => imageInput.click();
 imageInput.onchange = (e) => {
     const file = e.target.files[0];
@@ -420,7 +387,10 @@ async function handleAction() {
     inputText.value = '';
     inputText.style.height = 'auto';
     
+    // FIX: Capture image data to pass into the stream state
     const imageForGraph = currentImageBase64;
+    
+    // Clear UI preview immediately
     currentImageBase64 = null;
     imagePreviewContainer.classList.remove('active');
     imageInput.value = '';
@@ -431,14 +401,16 @@ async function handleAction() {
     smartScroll();
 
     try {
-        // Use LangGraph streaming
-        const stream = await app.stream({ messages: [new HumanMessage(inputWithHint)], imageData: imageForGraph });
+        // Pass imageData in the initial state
+        const stream = await app.stream({ 
+            messages: [new HumanMessage(inputWithHint)], 
+            imageData: imageForGraph 
+        });
+        
         for await (const event of stream) {
             if (!isGenerating) break;
-            // The nodes handle their own UI updates
         }
     } catch (e) {
-        console.error(e);
         showError("Chat Error", e);
     } finally {
         isGenerating = false;
@@ -451,5 +423,4 @@ inputText.oninput = function() { this.style.height = 'auto'; this.style.height =
 inputText.onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleAction(); } };
 sendBtn.onclick = handleAction;
 
-// Start
 init();
