@@ -11,16 +11,15 @@ const OPENSKY_CONFIG = {
 };
 
 // SINGLE SMART MODEL CONFIGURATION
-// Using Llama-3-8B for high intelligence.
-// If this is too slow/heavy for your device, change ID to: "Phi-3.5-mini-instruct-q4f16_1-MLC"
+// Qwen3 1.7B - Fast and Efficient
 const MODEL_CONFIG = {
-    id: "Llama-3-8B-Instruct-q4f16_1-MLC", 
-    name: "Llama-3 8B",
+    id: "Qwen3-1.7B-q0f16-MLC", 
+    name: "Qwen3 1.7B",
 };
 
 const AGENT_PROMPT = `
 You are ${OPENSKY_CONFIG.agent_name}, created by ${OPENSKY_CONFIG.creator}.
-You are an advanced AI agent with access to tools. You are smart, detailed, and helpful.
+You are an advanced AI agent with access to tools. You are smart, concise, and helpful.
 
 INSTRUCTIONS:
 - If you need real-time data or specific information, use a tool.
