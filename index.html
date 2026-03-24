@@ -3,14 +3,32 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>Opensky Agent</title>
+  <meta name="theme-color" content="#4f46e5">
+  <title>Opensky</title>
+  
+  <!-- Link to your existing CSS -->
   <link rel="stylesheet" href="style.css">
+  
+  <!-- Fonts -->
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  
   <!-- Chart.js for Graphs -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+  <!-- REQUIRED: Import Map for LangGraph.js -->
+  <script type="importmap">
+    {
+      "imports": {
+        "@mlc-ai/web-llm": "https://esm.run/@mlc-ai/web-llm",
+        "@langchain/langgraph": "https://esm.run/@langchain/langgraph",
+        "@langchain/core": "https://esm.run/@langchain/core"
+      }
+    }
+  </script>
 </head>
 <body>
 
+  <!-- Loading Screen -->
   <div class="loading-screen" id="loadingScreen">
     <div class="loader-content">
       <div class="logo-mark">
@@ -29,6 +47,7 @@
     </div>
   </div>
 
+  <!-- Main App Container -->
   <div class="app-container" id="chatContainer">
     <main class="chat-area" id="messagesArea"></main>
 
@@ -60,8 +79,10 @@
     </footer>
   </div>
 
-  <!-- Tesseract.js for OCR (CPU based, works on all devices) -->
+  <!-- Tesseract.js for OCR -->
   <script src='https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js'></script>
+  
+  <!-- Link to your existing Javascript file -->
   <script type="module" src="script.js"></script>
 </body>
 </html>
