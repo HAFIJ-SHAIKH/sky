@@ -1,4 +1,6 @@
 import * as webllm from "https://esm.run/@mlc-ai/web-llm";
+import { StateGraph, END } from "@langchain/langgraph";
+import { HumanMessage, AIMessage, SystemMessage } from "@langchain/core/messages";
 
 // ==========================================
 // 1. CONFIGURATION
@@ -6,13 +8,13 @@ import * as webllm from "https://esm.run/@mlc-ai/web-llm";
 const OPENSKY_CONFIG = {
     agent_name: "Opensky",
     creator: "Hafij Shaikh",
-    version: "12.0.0" // Smart Single-Model Architecture
+    version: "12.0.0" // LangGraph Architecture
 };
 
-const conversationHistory = [];
 const MAX_HISTORY = 20; 
 
 // --- ADVANCED SYSTEM PROMPT ---
+// Agent identity is injected here
 const SYSTEM_PROMPT = `
 You are ${OPENSKY_CONFIG.agent_name}, created by ${OPENSKY_CONFIG.creator}. 
 You are an intelligent agent with access to tools and data visualization.
@@ -26,20 +28,20 @@ CAPABILITIES:
 
 RULES:
 - Be concise. Do not repeat yourself.
-- If asked for a list, give exactly what is asked (e.g., "give me an advice" = 1 item).
+- If asked for a list, give exactly what is asked.
 - If you need data to answer a question, USE A TOOL. Do not guess.
 - Never say "I can't create graphs" or "I don't have access". You DO have access.
 
 TOOLS AVAILABLE:
-wiki(topic), weather(city), define(word), country(name), pokemon(name), joke(), advice(), bored().
+wiki(topic), weather(city), define(word), country(name), pokemon(name), joke(), advice(), bored(), ocr(image).
 `;
 
 const MODEL_CONFIG = {
-    id: "Phi-3.5-mini-instruct-q4f16_1-MLC", // Smarter Model
+    id: "Phi-3.5-mini-instruct-q4f16_1-MLC",
     name: "Phi-3.5 Mini",
     options: {
         temperature: 0.7,
-        repetition_penalty: 1.1 // Prevents looping
+        repetition_penalty: 1.1
     }
 };
 
@@ -115,8 +117,8 @@ const Tools = {
         return { text: `${d.activity} (${d.type})` };
     },
     ocr: async (base64) => {
-        // Using Tesseract.js loaded in HTML
         try {
+            // Ensure Tesseract is loaded
             const result = await Tesseract.recognize(`data:image/jpeg;base64,${base64}`, 'eng', { logger: m => console.log(m) });
             return { text: result.data.text || "No text found." };
         } catch(e) {
@@ -125,24 +127,148 @@ const Tools = {
     }
 };
 
-// Parse Tool Action from model output
-async function handleToolAction(text) {
+// ==========================================
+// 4. LANGGRAPH DEFINITION
+// ==========================================
+
+// Helper: Parse tool action from text
+function parseToolAction(text) {
     const match = text.match(/ACTION:\s*(\w+)\s*ARGS:\s*([^\n]+)/i);
     if (!match) return null;
+    return { name: match[1].toLowerCase(), args: match[2].trim() };
+}
 
-    const toolName = match[1].toLowerCase();
-    const args = match[2].trim();
+// Define Agent State
+const agentState = {
+    messages: { value: (x, y) => x.concat(y), default: () => [] },
+    imageData: { value: (x, y) => y ?? x, default: () => null }
+};
 
-    if (toolName === 'ocr' && currentImageBase64) {
-        return await Tools.ocr(currentImageBase64);
-    } else if (Tools[toolName]) {
-        return await Tools[toolName](args);
+// NODE 1: Agent Brain (Calls WebLLM)
+async function agentNode(state) {
+    const history = state.messages;
+    
+    // Construct messages for WebLLM
+    const messages = [
+        { role: "system", content: SYSTEM_PROMPT },
+        ...history.map(m => ({ role: m._getType(), content: m.content }))
+    ];
+
+    // UI Preparation: Create message container
+    // Note: We access DOM directly for streaming effect
+    const msgDiv = document.createElement('div');
+    msgDiv.className = 'message assistant';
+    
+    const panel = document.createElement('div');
+    panel.className = 'agent-panel open';
+    panel.innerHTML = `<div class="agent-header"><span>🧠 Thinking...</span></div><div class="agent-body"></div>`;
+    panel.querySelector('.agent-header').onclick = () => panel.classList.toggle('open');
+    
+    const content = document.createElement('div');
+    content.className = 'assistant-content';
+    
+    msgDiv.appendChild(panel);
+    msgDiv.appendChild(content);
+    messagesArea.appendChild(msgDiv);
+    smartScroll();
+
+    const status = panel.querySelector('span');
+    const body = panel.querySelector('.agent-body');
+
+    // Streaming Loop
+    let fullText = "";
+    status.textContent = "⚡ Processing...";
+    
+    const completion = await engine.chat.completions.create({
+        messages: messages,
+        temperature: MODEL_CONFIG.options.temperature,
+        repetition_penalty: MODEL_CONFIG.options.repetition_penalty,
+        stream: true
+    });
+
+    for await (const chunk of completion) {
+        if (!isGenerating) break; // Stop button check
+        const delta = chunk.choices[0].delta.content;
+        if (delta) {
+            fullText += delta;
+            body.textContent = fullText; // Live thoughts
+            parseAndRender(fullText, content); // Live preview
+            smartScroll();
+        }
     }
-    return { text: `Unknown tool: ${toolName}` };
+
+    status.textContent = "✅ Done";
+    
+    // Return AI Message to Graph
+    return { messages: [new AIMessage(fullText)], imageData: null }; // Clear image data after use
+}
+
+// NODE 2: Tool Executor
+async function toolNode(state) {
+    const lastMessage = state.messages[state.messages.length - 1];
+    const text = lastMessage.content;
+    
+    const toolCall = parseToolAction(text);
+    if (!toolCall) return { messages: [new HumanMessage("Error: Tool format not recognized.")] };
+
+    let result;
+    
+    // Handle OCR with State Image
+    if (toolCall.name === 'ocr' && state.imageData) {
+        result = await Tools.ocr(state.imageData);
+    } 
+    // Handle Standard Tools
+    else if (Tools[toolCall.name]) {
+        result = await Tools[toolCall.name](toolCall.args);
+    } 
+    else {
+        result = { text: `Unknown tool: ${toolCall.name}` };
+    }
+
+    // Render Tool Result in UI
+    const lastMsgDiv = messagesArea.lastChild;
+    const contentDiv = lastMsgDiv.querySelector('.assistant-content');
+    if (contentDiv) {
+        let toolHtml = `<div class="tool-result"><b>Tool Result:</b> ${result.text}`;
+        if (result.image) toolHtml += `<br><img src="${result.image}" style="max-width:100px; border-radius:4px; margin-top:5px;">`;
+        toolHtml += `</div>`;
+        contentDiv.innerHTML += toolHtml;
+    }
+
+    // Return Observation to Graph
+    return { 
+        messages: [new HumanMessage(`OBSERVATION: ${JSON.stringify(result.text)}. Now answer the user.`)] 
+    };
+}
+
+// EDGE: Should we continue?
+function shouldContinue(state) {
+    const lastMessage = state.messages[state.messages.length - 1];
+    if (lastMessage._getType() === 'ai' && lastMessage.content.includes("ACTION:")) {
+        return "tools";
+    }
+    return END;
+}
+
+// Build Graph
+let workflow;
+let app;
+
+async function initGraph() {
+    workflow = new StateGraph({ channels: agentState });
+    
+    workflow.addNode("agent", agentNode);
+    workflow.addNode("tools", toolNode);
+    
+    workflow.setEntryPoint("agent");
+    workflow.addConditionalEdges("agent", shouldContinue);
+    workflow.addEdge("tools", "agent");
+    
+    app = workflow.compile();
 }
 
 // ==========================================
-// 4. INIT
+// 5. INIT
 // ==========================================
 function showError(t, e) { debugLog.style.display = 'block'; debugLog.innerHTML = `${t}: ${e.message}`; }
 
@@ -158,7 +284,8 @@ async function init() {
           </div>
         `;
 
-        loadingLabel.textContent = `Loading ${MODEL_CONFIG.name} (Smarter Model)...`;
+        loadingLabel.textContent = `Loading ${MODEL_CONFIG.name}...`;
+        
         engine = await webllm.CreateMLCEngine(MODEL_CONFIG.id, {
             initProgressCallback: (report) => {
                 const p = Math.round(report.progress * 100);
@@ -167,6 +294,9 @@ async function init() {
                 loadingPercent.textContent = `${p}%`;
             }
         });
+
+        // Initialize LangGraph
+        await initGraph();
 
         loadingLabel.textContent = "Ready.";
         setTimeout(() => {
@@ -178,111 +308,13 @@ async function init() {
 }
 
 // ==========================================
-// 5. LOGIC
+// 6. RENDERER
 // ==========================================
 function smartScroll() {
     const near = messagesArea.scrollHeight - messagesArea.scrollTop - messagesArea.clientHeight < 100;
     if (near) messagesArea.scrollTop = messagesArea.scrollHeight;
 }
 
-async function runAgentLoop(query, hasImage) {
-    const msgDiv = document.createElement('div');
-    msgDiv.className = 'message assistant';
-
-    const panel = document.createElement('div');
-    panel.className = 'agent-panel open';
-    panel.innerHTML = `<div class="agent-header"><span>🧠 Thinking...</span></div><div class="agent-body"></div>`;
-    panel.querySelector('.agent-header').onclick = () => panel.classList.toggle('open');
-
-    const content = document.createElement('div');
-    content.className = 'assistant-content';
-
-    msgDiv.appendChild(panel);
-    msgDiv.appendChild(content);
-    messagesArea.appendChild(msgDiv);
-    smartScroll();
-
-    const status = panel.querySelector('span');
-    const body = panel.querySelector('.agent-body');
-
-    try {
-        // Prepare history
-        const messages = [
-            { role: "system", content: SYSTEM_PROMPT },
-            ...conversationHistory
-        ];
-
-        // Handle Image
-        if (hasImage) {
-            messages.push({ role: "user", content: `[Image Uploaded] ${query}. Use ACTION: ocr ARGS: image to read text if needed.` });
-        } else {
-            messages.push({ role: "user", content: query });
-        }
-
-        // ReAct Loop
-        let loops = 0;
-        let finalText = "";
-        
-        while (loops < 3) {
-            status.textContent = loops === 0 ? "⚡ Processing..." : "🔧 Using Tool...";
-            
-            const completion = await engine.chat.completions.create({
-                messages: messages,
-                temperature: MODEL_CONFIG.options.temperature,
-                repetition_penalty: MODEL_CONFIG.options.repetition_penalty,
-                stream: true
-            });
-
-            let currentChunk = "";
-            for await (const chunk of completion) {
-                if (!isGenerating) break;
-                const delta = chunk.choices[0].delta.content;
-                if (delta) {
-                    currentChunk += delta;
-                    body.textContent = currentChunk; // Live thoughts
-                    parseAndRender(currentChunk, content); // Live preview
-                    smartScroll();
-                }
-            }
-            
-            // Check if tool is needed
-            const toolResult = await handleToolAction(currentChunk);
-            if (toolResult) {
-                status.textContent = "✅ Tool Used";
-                
-                // Show result to user
-                let toolHtml = `<div class="tool-result"><b>Tool Result:</b> ${toolResult.text}`;
-                if (toolResult.image) toolHtml += `<br><img src="${toolResult.image}" style="max-width:100px; border-radius:4px; margin-top:5px;">`;
-                toolHtml += `</div>`;
-                content.innerHTML += toolHtml;
-
-                // Feed back to model
-                messages.push({ role: "assistant", content: currentChunk });
-                messages.push({ role: "user", content: `OBSERVATION: ${JSON.stringify(toolResult.text)}. Now summarize or answer the user.` });
-                
-                loops++;
-            } else {
-                finalText = currentChunk;
-                break; // Done
-            }
-        }
-
-        conversationHistory.push({ role: "user", content: query });
-        conversationHistory.push({ role: "assistant", content: finalText });
-        if (conversationHistory.length > MAX_HISTORY * 2) conversationHistory.splice(0, 2);
-
-    } catch (e) {
-        content.innerHTML += `<span style="color:red">Error: ${e.message}</span>`;
-    } finally {
-        isGenerating = false;
-        sendBtn.classList.remove('stop-btn');
-        sendBtn.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>`;
-    }
-}
-
-// ==========================================
-// 6. RENDERER
-// ==========================================
 function parseAndRender(text, container) {
     let html = text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
@@ -291,7 +323,6 @@ function parseAndRender(text, container) {
         try {
             const data = JSON.parse(json);
             const id = 'chart_' + Math.random().toString(36).substr(2, 9);
-            // We create a placeholder that the main loop will fill if needed, or we use a trick:
             setTimeout(() => {
                 const el = document.getElementById(id);
                 if(el) new Chart(el, { type: data.type || 'bar', data: data.data, options: { responsive: true, maintainAspectRatio: false } });
@@ -352,30 +383,57 @@ async function handleAction() {
     }
 
     const text = inputText.value.trim();
-    if (!text && !currentImageBase64) return;
+    const hasImage = !!currentImageBase64;
+    
+    if (!text && !hasImage) return;
 
+    // 1. User Message UI
     const userMsg = document.createElement('div');
     userMsg.className = 'message user';
     let bubble = `<div class="user-bubble">${text}`;
-    if (currentImageBase64) bubble += `<img src="data:image/jpeg;base64,${currentImageBase64}">`;
+    if (hasImage) bubble += `<img src="data:image/jpeg;base64,${currentImageBase64}">`;
     bubble += `</div>`;
     userMsg.innerHTML = bubble;
     messagesArea.appendChild(userMsg);
 
-    const hasImg = !!currentImageBase64;
+    // 2. Prepare Input
+    const userInput = text || "Read this image.";
+    const inputWithHint = hasImage ? `[Image Uploaded] ${userInput}. Use ACTION: ocr ARGS: image to read text if needed.` : userInput;
+
     inputText.value = '';
     inputText.style.height = 'auto';
     
+    // IMPORTANT: Clear UI image, but keep base64 in variable for the graph
+    const imageForGraph = currentImageBase64;
     currentImageBase64 = null;
     imagePreviewContainer.classList.remove('active');
     imageInput.value = '';
 
+    // 3. Run Graph
     isGenerating = true;
     sendBtn.classList.add('stop-btn');
     sendBtn.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"></rect></svg>`;
     
     smartScroll();
-    await runAgentLoop(text || "Read this image.", hasImg);
+
+    try {
+        // Stream the graph execution
+        // We pass the image in the state
+        const stream = await app.stream({ messages: [new HumanMessage(inputWithHint)], imageData: imageForGraph });
+        
+        for await (const event of stream) {
+            if (!isGenerating) break;
+            // The nodes handle their own UI updates (agentNode streams text)
+            console.log("Graph Event:", event);
+        }
+    } catch (e) {
+        console.error(e);
+        // Error UI handling
+    } finally {
+        isGenerating = false;
+        sendBtn.classList.remove('stop-btn');
+        sendBtn.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>`;
+    }
 }
 
 inputText.oninput = function() { this.style.height = 'auto'; this.style.height = Math.min(this.scrollHeight, 100) + 'px'; };
