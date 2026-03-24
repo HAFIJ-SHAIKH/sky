@@ -8,28 +8,50 @@ const OPENSKY_CONFIG = {
     creator: "Hafij Shaikh"
 };
 
-// SINGLE MODEL CONFIGURATION
+// AGENT: Fast Router (3.8B) - Better than Qwen
+const AGENT_MODEL = {
+    id: "Phi-3.5-mini-instruct-q4f16_1-MLC",
+    name: "Agent",
+};
+
+// CORE: Smart Worker (8B)
 const CORE_MODEL = {
     id: "Llama-3-8B-Instruct-q4f16_1-MLC",
     name: "Core",
 };
 
-const SYSTEM_PROMPT = `
-You are ${OPENSKY_CONFIG.agent_name}, a highly intelligent AI agent created by ${OPENSKY_CONFIG.creator}.
-You are NOT ${OPENSKY_CONFIG.creator}. You are an AI assistant.
+// PROMPTS
+const AGENT_PROMPT = `
+You are a Router for ${OPENSKY_CONFIG.agent_name}.
+You are NOT ${OPENSKY_CONFIG.creator}.
+Analyze the user's request.
 
-RULES:
-1. Identity: If asked who you are, you are ${OPENSKY_CONFIG.agent_name}. If asked who made you, it is ${OPENSKY_CONFIG.creator}.
-2. Reasoning: Use <think</think tags to plan your response silently.
-3. Tools: If you need real-time data, use tools. Format: ACTION: tool_name ARGS: value
-4. Style: Be helpful, concise, and accurate.
+1. If request is SIMPLE (greetings, basic facts, "what is 2+2", identity questions):
+   Output ONLY: SIMPLE: [your short answer]
+   
+2. If request is COMPLEX (coding, creative writing, deep reasoning):
+   Output ONLY: COMPLEX
 
-TOOLS:
-wiki(topic), weather(city), define(word), country(name), pokemon(name), joke(), advice(), bored().
+3. Identity Rules:
+   - Who are you? -> SIMPLE: I am ${OPENSKY_CONFIG.agent_name}.
+   - Who made you? -> SIMPLE: I was created by ${OPENSKY_CONFIG.creator}.
+`;
+
+const SIMPLE_TASK_PROMPT = `
+You are ${OPENSKY_CONFIG.agent_name} (Fast Version).
+Answer the user's request concisely.
+If you need tools: ACTION: tool_name ARGS: value
+Tools: wiki(topic), weather(city), pokemon(name), country(name).
+`;
+
+const CORE_PROMPT = `
+You are the Advanced Intelligence Core of ${OPENSKY_CONFIG.agent_name}.
+You are created by ${OPENSKY_CONFIG.creator}.
+You handle complex tasks with deep reasoning and detail.
 `;
 
 const conversationHistory = [];
-const MAX_HISTORY = 30; 
+const MAX_HISTORY = 20; 
 
 // ==========================================
 // 2. DOM
@@ -45,11 +67,13 @@ const loadingLabel = document.getElementById('loadingLabel');
 const modelStatusContainer = document.getElementById('modelStatusContainer');
 const debugLog = document.getElementById('debugLog');
 
-let engine = null;
+let agentEngine = null;
+let coreEngine = null;
 let isGenerating = false;
+let coreLoadingPromise = null; // To track background loading
 
 // ==========================================
-// 3. TOOLS (ALL RESTORED)
+// 3. TOOLS
 // ==========================================
 const Tools = {
     wiki: async (q) => {
@@ -64,22 +88,22 @@ const Tools = {
         const w = await (await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current_weather=true`)).json();
         return { text: `Weather in ${name}: ${w.current_weather.temperature}°C` };
     },
-    define: async (word) => {
-        try {
-            const res = await fetch(`https://api.dictionaryapi.dev/api/v2/entries/en/${word}`);
-            const d = await res.json();
-            return { text: d[0].meanings[0].definitions[0].definition };
-        } catch { return { text: "Definition not found" }; }
+    pokemon: async (name) => {
+        const res = await fetch(`https://pokeapi.co/api/v2/pokemon/${name.toLowerCase()}`);
+        const d = await res.json();
+        return { text: `#${d.id} ${d.name}`, image: d.sprites?.front_default };
     },
     country: async (name) => {
         const res = await fetch(`https://restcountries.com/v3.1/name/${name}`);
         const d = await res.json();
         return { text: `${d[0].name.common}, Capital: ${d[0].capital}`, image: d[0].flags?.svg };
     },
-    pokemon: async (name) => {
-        const res = await fetch(`https://pokeapi.co/api/v2/pokemon/${name.toLowerCase()}`);
-        const d = await res.json();
-        return { text: `#${d.id} ${d.name}`, image: d.sprites?.front_default };
+    define: async (word) => {
+        try {
+            const res = await fetch(`https://api.dictionaryapi.dev/api/v2/entries/en/${word}`);
+            const d = await res.json();
+            return { text: d[0].meanings[0].definitions[0].definition };
+        } catch { return { text: "Not found" }; }
     },
     joke: async () => {
         const d = await (await fetch("https://v2.jokeapi.dev/joke/Any?type=single")).json();
@@ -91,7 +115,7 @@ const Tools = {
     },
     bored: async () => {
         const d = await (await fetch("https://www.boredapi.com/api/activity")).json();
-        return { text: `${d.activity} (${d.type})` };
+        return { text: d.activity };
     }
 };
 
@@ -102,7 +126,7 @@ function parseToolAction(text) {
 }
 
 // ==========================================
-// 4. LOGIC (ReAct Loop)
+// 4. LOGIC
 // ==========================================
 
 function smartScroll() {
@@ -133,57 +157,109 @@ async function runAgentLoop(query) {
     const statusText = status.querySelector('.status-text');
 
     try {
-        const messages = [
-            { role: "system", content: SYSTEM_PROMPT },
-            ...conversationHistory,
+        // --- STEP 1: Routing Decision (Fast) ---
+        statusText.textContent = "Analyzing...";
+        
+        const routerMessages = [
+            { role: "system", content: AGENT_PROMPT },
             { role: "user", content: query }
         ];
 
-        let loops = 0;
-        let finalResponse = "";
+        // Low temp for strict routing
+        const routerCompletion = await agentEngine.chat.completions.create({
+            messages: routerMessages, temperature: 0.0, max_tokens: 50
+        });
 
-        while (loops < 3) {
-            statusText.textContent = loops === 0 ? "Thinking..." : "Using Tool...";
+        const decision = routerCompletion.choices[0].message.content.trim();
+        
+        // --- STEP 2: Execution ---
 
-            const completion = await engine.chat.completions.create({
-                messages: messages, temperature: 0.7, stream: true
+        // CASE A: Complex Task -> Core
+        if (decision.startsWith("COMPLEX")) {
+            statusText.textContent = "Deep Thinking (Core)...";
+            
+            // Ensure Core is loaded
+            if (!coreEngine && coreLoadingPromise) {
+                statusText.textContent = "Loading Core Model...";
+                await coreLoadingPromise;
+            }
+            
+            if (!coreEngine) throw new Error("Core model failed to load.");
+
+            const coreMessages = [
+                { role: "system", content: CORE_PROMPT },
+                ...conversationHistory,
+                { role: "user", content: query }
+            ];
+
+            const stream = await coreEngine.chat.completions.create({
+                messages: coreMessages, temperature: 0.7, stream: true
             });
 
-            let currentChunk = "";
-            for await (const chunk of completion) {
+            let fullText = "";
+            for await (const chunk of stream) {
                 if (!isGenerating) break;
                 const delta = chunk.choices[0].delta.content;
                 if (delta) {
-                    currentChunk += delta;
-                    parseAndRender(currentChunk, content);
+                    fullText += delta;
+                    parseAndRender(fullText, content);
                     smartScroll();
                 }
             }
+            
+            conversationHistory.push({ role: "user", content: query });
+            conversationHistory.push({ role: "assistant", content: fullText });
+        } 
+        // CASE B: Simple Task -> Agent handles it
+        else {
+            statusText.textContent = "Processing...";
+            
+            let answerText = decision.replace("SIMPLE:", "").trim();
+            
+            // If router didn't answer, run agent logic
+            if (!answerText || answerText.length < 2) {
+                 const agentMessages = [
+                    { role: "system", content: SIMPLE_TASK_PROMPT },
+                    ...conversationHistory,
+                    { role: "user", content: query }
+                ];
 
-            // Check for Tool
-            const toolCall = parseToolAction(currentChunk);
+                const completion = await agentEngine.chat.completions.create({
+                    messages: agentMessages, temperature: 0.7, stream: true
+                });
+
+                let currentChunk = "";
+                for await (const chunk of completion) {
+                    if (!isGenerating) break;
+                    const delta = chunk.choices[0].delta.content;
+                    if (delta) {
+                        currentChunk += delta;
+                        parseAndRender(currentChunk, content);
+                        smartScroll();
+                    }
+                }
+                answerText = currentChunk;
+            } else {
+                parseAndRender(answerText, content);
+            }
+
+            // Tool Check
+            const toolCall = parseToolAction(answerText);
             if (toolCall) {
+                statusText.textContent = "Fetching Data...";
                 let toolResult = { text: "Error" };
                 if (Tools[toolCall.name]) toolResult = await Tools[toolCall.name](toolCall.args);
-                else toolResult = { text: `Unknown tool: ${toolCall.name}` };
                 
                 let resultHtml = `<div class="tool-result"><b>Result:</b> ${toolResult.text}</div>`;
                 if (toolResult.image) resultHtml += `<img src="${toolResult.image}" alt="Image">`;
                 
                 content.innerHTML += resultHtml;
-                
-                // Feed back to model
-                messages.push({ role: "assistant", content: currentChunk });
-                messages.push({ role: "user", content: `OBSERVATION: ${JSON.stringify(toolResult.text)}. Now answer.` });
-                loops++;
-            } else {
-                finalResponse = currentChunk;
-                break;
+                answerText += ` [Tool Used]`;
             }
-        }
 
-        conversationHistory.push({ role: "user", content: query });
-        conversationHistory.push({ role: "assistant", content: finalResponse });
+            conversationHistory.push({ role: "user", content: query });
+            conversationHistory.push({ role: "assistant", content: answerText });
+        }
 
         status.style.display = 'none';
 
@@ -205,6 +281,7 @@ function parseAndRender(text, container) {
     // Hide think tags
     html = html.replace(/&lt;think&gt;[\s\S]*?&lt;\/think&gt;/g, '');
     
+    // Code
     html = html.replace(/```(\w+)?\n([\s\S]*?)```/g, (m, lang, code) => 
         `<div class="code-block"><div class="code-header"><span>${lang||'code'}</span><button class="copy-btn" onclick="copyCode(this)">Copy</button></div><div class="code-body"><pre>${code}</pre></div></div>`
     );
@@ -218,7 +295,7 @@ window.copyCode = (btn) => {
 };
 
 // ==========================================
-// 6. INITIALIZATION
+// 6. INITIALIZATION (Smart Background)
 // ==========================================
 function showError(t, e) { 
     debugLog.style.display = 'block'; 
@@ -232,30 +309,56 @@ async function init() {
         if (!navigator.gpu) throw new Error("WebGPU not supported.");
 
         modelStatusContainer.innerHTML = `
-          <div class="model-card">
+          <div class="model-card" id="card-agent">
+            <div class="model-card-name">${AGENT_MODEL.name}</div>
+            <div class="model-card-desc" id="status-agent">Waiting...</div>
+          </div>
+          <div class="model-card" id="card-core">
             <div class="model-card-name">${CORE_MODEL.name}</div>
-            <div class="model-card-desc" id="status-core">Waiting...</div>
+            <div class="model-card-desc" id="status-core">Queued...</div>
           </div>
         `;
 
-        loadingLabel.textContent = `Loading Core...`;
-        engine = await webllm.CreateMLCEngine(CORE_MODEL.id, {
+        // 1. Load Agent (Fast)
+        loadingLabel.textContent = `Loading Agent...`;
+        agentEngine = await webllm.CreateMLCEngine(AGENT_MODEL.id, {
             initProgressCallback: (report) => {
                 const p = Math.round(report.progress * 100);
-                sliderFill.style.width = `${p}%`;
+                sliderFill.style.width = `${p / 2}%`;
                 loadingPercent.textContent = `${p}%`;
-                document.getElementById('status-core').textContent = report.text;
+                document.getElementById('status-agent').textContent = report.text;
             }
         });
+        document.getElementById('status-agent').textContent = "Ready";
 
-        document.getElementById('status-core').textContent = "Ready";
-
-        loadingLabel.textContent = "System Online.";
+        // UI is now Interactive!
+        loadingLabel.textContent = "Ready. Loading Core in background...";
         setTimeout(() => {
             loadingScreen.classList.add('hidden');
             chatContainer.classList.add('active');
             sendBtn.disabled = false;
         }, 500);
+
+        // 2. Load Core (Background)
+        // We do NOT await this. We let it happen while user chats.
+        coreLoadingPromise = webllm.CreateMLCEngine(CORE_MODEL.id, {
+            initProgressCallback: (report) => {
+                const p = Math.round(report.progress * 100);
+                // We don't animate the main bar, but we update the card
+                document.getElementById('status-core').textContent = report.text;
+                // Update the global bar to fill the second half
+                sliderFill.style.width = `${50 + (p / 2)}%`;
+            }
+        });
+
+        coreLoadingPromise.then(engine => {
+            coreEngine = engine;
+            document.getElementById('status-core').textContent = "Ready";
+            coreLoadingPromise = null;
+        }).catch(err => {
+            document.getElementById('status-core').textContent = "Error";
+            console.error("Core load failed", err);
+        });
 
     } catch (e) { 
         showError("Init Failed", e); 
@@ -270,7 +373,8 @@ async function handleAction() {
     if (isGenerating) {
         isGenerating = false;
         sendBtn.classList.remove('stop-btn');
-        if(engine) await engine.interruptGenerate();
+        if(agentEngine) await agentEngine.interruptGenerate();
+        if(coreEngine) await coreEngine.interruptGenerate();
         return;
     }
 
