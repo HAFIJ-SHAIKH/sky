@@ -1,8 +1,6 @@
 import * as webllm from "https://esm.run/@mlc-ai/web-llm";
 import { StateGraph, END } from "https://esm.run/@langchain/langgraph";
 import { HumanMessage, AIMessage } from "https://esm.run/@langchain/core/messages";
-// ADDED MISSING IMPORT for OCR tool
-import Tesseract from 'https://esm.run/tesseract.js';
 
 // ==========================================
 // 1. CONFIGURATION
@@ -12,26 +10,29 @@ const OPENSKY_CONFIG = {
     creator: "Hafij Shaikh"
 };
 
-// FIXED MODEL CONFIGURATION
-// Changed from "Qwen3..." (invalid) to "Qwen2.5-1.5B-Instruct" (valid & fast)
-const MODEL_CONFIG = {
-    id: "Qwen2.5-1.5B-Instruct-q4f16_1-MLC", 
-    name: "Qwen 2.5 1.5B",
+// MODELS (Using your working IDs)
+const MODELS = {
+  router: {
+    id: "Qwen2.5-1.5B-Instruct-q4f16_1-MLC",
+    name: "Atlas Core",
+    role: "Router & Logic",
+    prompt: `You are ${OPENSKY_CONFIG.agent_name}, created by ${OPENSKY_CONFIG.creator}.
+You are a fast, efficient router.
+1. If the user wants to draw, paint, or create an image: Output exactly [ROUTE_TO_ARTIST]
+2. If you need real-time data: Output: ACTION: tool_name ARGS: value
+3. Otherwise, answer conversationally.
+Tools: wiki(topic), weather(city), define(word), country(name), pokemon(name), joke(), advice(), bored().`
+  },
+  worker: {
+    id: "Phi-3.5-mini-instruct-q4f16_1-MLC",
+    name: "Artist Module",
+    role: "Creative",
+    prompt: `You are the Creative Module of ${OPENSKY_CONFIG.agent_name}.
+You are an expert SVG artist.
+When asked to create, draw, or paint, you MUST output valid SVG code inside a code block.
+Create detailed, artistic SVGs.`
+  }
 };
-
-const AGENT_PROMPT = `
-You are ${OPENSKY_CONFIG.agent_name}, created by ${OPENSKY_CONFIG.creator}.
-You are an advanced AI agent with access to tools. You are smart, concise, and helpful.
-
-INSTRUCTIONS:
-- If you need real-time data or specific information, use a tool.
-- To use a tool, output strictly in this format: ACTION: tool_name ARGS: value
-- After receiving an observation, process it and answer the user.
-- If you cannot answer with tools, use your internal knowledge.
-
-TOOLS:
-wiki(topic), weather(city), define(word), country(name), pokemon(name), joke(), advice(), bored(), ocr(image).
-`;
 
 // ==========================================
 // 2. DOM
@@ -52,9 +53,9 @@ const imagePreviewContainer = document.getElementById('imagePreviewContainer');
 const imagePreview = document.getElementById('imagePreview');
 const removeImageBtn = document.getElementById('removeImageBtn');
 
-let engine = null;
+let engines = {}; // Store both engines here
 let isGenerating = false;
-let currentImageBase64 = null; 
+let currentImageBase64 = null;
 
 // ==========================================
 // 3. TOOLS
@@ -100,13 +101,6 @@ const Tools = {
     bored: async () => {
         const d = await (await fetch("https://www.boredapi.com/api/activity")).json();
         return { text: d.activity };
-    },
-    ocr: async (base64) => {
-        if(!base64) return { text: "No image" };
-        try {
-            const res = await Tesseract.recognize(`data:image/jpeg;base64,${base64}`, 'eng');
-            return { text: res.data.text || "No text" };
-        } catch(e) { return { text: "OCR Error" }; }
     }
 };
 
@@ -140,18 +134,19 @@ function createMessageUI(title) {
     return { msgDiv, content };
 }
 
-// SINGLE AGENT NODE
-async function agentNode(state) {
+// NODE: Router (Qwen)
+async function routerNode(state) {
     const history = state.messages;
     const messages = [
-        { role: "system", content: AGENT_PROMPT },
+        { role: "system", content: MODELS.router.prompt },
         ...history.map(m => ({ role: m._getType(), content: m.content }))
     ];
 
-    const { msgDiv, content } = createMessageUI("🧠 Opensky");
+    const { msgDiv, content } = createMessageUI("⚡ Router (Atlas)");
     const body = msgDiv.querySelector('.agent-body');
 
-    const stream = await engine.chat.completions.create({
+    // Use Router Engine
+    const stream = await engines.router.chat.completions.create({
         messages, temperature: 0.7, stream: true
     });
 
@@ -168,6 +163,10 @@ async function agentNode(state) {
     }
     
     // Decision Logic
+    if (fullText.includes("[ROUTE_TO_ARTIST]")) {
+        return { nextAction: "artist", messages: [new AIMessage(fullText)] };
+    }
+    
     const toolCall = parseToolAction(fullText);
     if (toolCall) {
         return { nextAction: "tools", messages: [new AIMessage(fullText)] };
@@ -176,6 +175,42 @@ async function agentNode(state) {
     return { nextAction: END, messages: [new AIMessage(fullText)] };
 }
 
+// NODE: Artist (Phi-3.5)
+async function artistNode(state) {
+    const history = state.messages;
+    const cleanHistory = history.map(m => {
+        if (m.content.includes("[ROUTE_TO_ARTIST]")) return new HumanMessage("Create art based on previous context.");
+        return m;
+    });
+
+    const messages = [
+        { role: "system", content: MODELS.worker.prompt },
+        ...cleanHistory.map(m => ({ role: m._getType(), content: m.content }))
+    ];
+
+    const { msgDiv, content } = createMessageUI("🎨 Artist (Worker)");
+    const body = msgDiv.querySelector('.agent-body');
+
+    // Use Worker Engine
+    const stream = await engines.worker.chat.completions.create({
+        messages, temperature: 0.7, stream: true
+    });
+
+    let fullText = "";
+    for await (const chunk of stream) {
+        if (!isGenerating) break;
+        const delta = chunk.choices[0].delta.content;
+        if (delta) {
+            fullText += delta;
+            body.textContent = fullText;
+            parseAndRender(fullText, content);
+            smartScroll();
+        }
+    }
+    return { nextAction: END, messages: [new AIMessage(fullText)] };
+}
+
+// NODE: Tools
 async function toolsNode(state) {
     const lastMsg = state.messages[state.messages.length - 1].content;
     const toolCall = parseToolAction(lastMsg);
@@ -186,14 +221,13 @@ async function toolsNode(state) {
     let result = { text: "Tool not found" };
     if (toolCall) {
         const { name, args } = toolCall;
-        if (name === 'ocr') result = await Tools.ocr(state.imageData);
-        else if (Tools[name]) result = await Tools[name](args);
+        if (Tools[name]) result = await Tools[name](args);
     }
 
     content.innerHTML += `<div class="tool-result"><b>Result:</b> ${result.text}</div>`;
     
     return { 
-        nextAction: "agent", 
+        nextAction: "router", 
         messages: [new HumanMessage(`OBSERVATION: ${JSON.stringify(result.text)}. Now answer.`)] 
     };
 }
@@ -210,30 +244,43 @@ let app;
 async function initGraph() {
     const agentStateChannels = {
         messages: { value: (x, y) => x.concat(y), default: () => [] },
-        nextAction: { value: (x, y) => y ?? x, default: () => null },
-        imageData: { value: (x, y) => y ?? x, default: () => null } 
+        nextAction: { value: (x, y) => y ?? x, default: () => null }
     };
 
     const workflow = new StateGraph({ channels: agentStateChannels });
     
-    workflow.addNode("agent", agentNode);
+    workflow.addNode("router", routerNode);
+    workflow.addNode("artist", artistNode);
     workflow.addNode("tools", toolsNode);
     
-    workflow.setEntryPoint("agent");
+    workflow.setEntryPoint("router");
     
-    workflow.addConditionalEdges("agent", checkNextAction);
-    workflow.addEdge("tools", "agent");
+    workflow.addConditionalEdges("router", checkNextAction);
+    workflow.addEdge("tools", "router");
+    // Artist goes straight to END after generation
     
     app = workflow.compile();
 }
 
 // ==========================================
-// 6. INIT
+// 6. INITIALIZATION (YOUR WORKING LOGIC)
 // ==========================================
-function showError(t, e) { 
-    debugLog.style.display = 'block'; 
-    debugLog.innerHTML = `<strong>${t}:</strong> ${e.message}`; 
-    console.error(e);
+function showError(title, err) {
+    console.error(err);
+    debugLog.style.display = 'block';
+    debugLog.innerHTML = `<strong>${title}:</strong><br>${err.message || err}<br><br><em>Check console (F12) for details.</em>`;
+    loadingPercent.textContent = "Error";
+}
+
+// Helper for UI updates (From your code)
+function updateModelUI(cardId, report, basePercent) {
+  const card = document.getElementById(cardId);
+  if (!card) return;
+  const percent = Math.round(report.progress * 100);
+  
+  card.querySelector('.model-card-desc').textContent = report.text;
+  sliderFill.style.width = `${basePercent + Math.round(percent / 2)}%`;
+  loadingPercent.textContent = `${basePercent + Math.round(percent / 2)}%`;
 }
 
 async function init() {
@@ -241,48 +288,67 @@ async function init() {
         loadingLabel.textContent = "Checking WebGPU...";
         if (!navigator.gpu) throw new Error("WebGPU not supported.");
 
+        // Render Cards
         modelStatusContainer.innerHTML = `
-          <div class="model-card">
-            <div class="model-card-name">${MODEL_CONFIG.name}</div>
-            <div class="model-card-desc" id="model-status">Waiting...</div>
+          <div class="model-card" id="card-router">
+            <div class="model-card-name">${MODELS.router.name}</div>
+            <div class="model-card-desc">Pending...</div>
+          </div>
+          <div class="model-card" id="card-worker">
+            <div class="model-card-name">${MODELS.worker.name}</div>
+            <div class="model-card-desc">Pending...</div>
           </div>
         `;
 
-        loadingLabel.textContent = `Downloading ${MODEL_CONFIG.name}...`;
-        
-        engine = await webllm.CreateMLCEngine(MODEL_CONFIG.id, {
-            initProgressCallback: (report) => {
-                const p = Math.round(report.progress * 100);
-                sliderFill.style.width = `${p}%`;
-                loadingPercent.textContent = `${p}%`;
-                document.getElementById('model-status').textContent = report.text;
-            }
+        // 1. Load Router (Atlas)
+        loadingLabel.textContent = "Loading Router (1/2)...";
+        engines.router = await webllm.CreateMLCEngine(MODELS.router.id, {
+            initProgressCallback: (report) => updateModelUI('card-router', report, 0)
         });
 
-        document.getElementById('model-status').textContent = "Ready";
+        // 2. Load Worker (Artist)
+        loadingLabel.textContent = "Loading Worker (2/2)...";
+        engines.worker = await webllm.CreateMLCEngine(MODELS.worker.id, {
+            initProgressCallback: (report) => updateModelUI('card-worker', report, 50)
+        });
+
+        // 3. Compile Graph
         await initGraph();
 
-        loadingLabel.textContent = "Ready.";
+        loadingLabel.textContent = "System Ready.";
         setTimeout(() => {
             loadingScreen.classList.add('hidden');
             chatContainer.classList.add('active');
             sendBtn.disabled = false;
         }, 500);
 
-    } catch (e) { 
-        showError("Init Failed", e); 
+    } catch (err) {
+        showError("Initialization Failed", err);
     }
 }
 
+// ==========================================
+// 7. RENDERER & EVENTS
+// ==========================================
 function smartScroll() {
     messagesArea.scrollTop = messagesArea.scrollHeight;
 }
 
 function parseAndRender(text, container) {
     let html = text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-    html = html.replace(/```(\w+)?\n([\s\S]*?)```/g, (m, lang, code) => 
-        `<div class="code-block"><div class="code-header"><span>${lang||'code'}</span><button class="copy-btn" onclick="copyCode(this)">Copy</button></div><div class="code-body"><pre>${code}</pre></div></div>`
-    );
+    
+    // SVG / Code handling
+    html = html.replace(/```(\w+)?\n([\s\S]*?)```/g, (m, lang, code) => {
+      const decodedCode = code.replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">");
+      
+      // SVG Detection
+      if (lang === 'svg' || decodedCode.trim().startsWith('<svg')) {
+          return `<div class="generated-image-container">${decodedCode}</div>`;
+      }
+      
+      return `<div class="code-block"><div class="code-header"><span>${lang||'code'}</span><button class="copy-btn" onclick="copyCode(this)">Copy</button></div><div class="code-body"><pre>${code}</pre></div></div>`;
+    });
+
     container.innerHTML = html.replace(/\n/g, '<br>');
 }
 
@@ -310,21 +376,18 @@ async function handleAction() {
     if (isGenerating) {
         isGenerating = false;
         sendBtn.classList.remove('stop-btn');
-        if(engine) await engine.interruptGenerate();
+        if(engines.router) await engines.router.interruptGenerate();
+        if(engines.worker) await engines.worker.interruptGenerate();
         return;
     }
 
     const text = inputText.value.trim();
-    const hasImage = !!currentImageBase64;
-    if (!text && !hasImage) return;
+    if (!text && !currentImageBase64) return;
 
     const userMsg = document.createElement('div');
     userMsg.className = 'message user';
-    userMsg.innerHTML = `<div class="user-bubble">${text}${hasImage ? `<img src="data:image/jpeg;base64,${currentImageBase64}">` : ''}</div>`;
+    userMsg.innerHTML = `<div class="user-bubble">${text}</div>`;
     messagesArea.appendChild(userMsg);
-
-    const userInput = text || "Read this image.";
-    const inputWithHint = hasImage ? `[Image Uploaded] ${userInput}. Use ACTION: ocr ARGS: image.` : userInput;
 
     inputText.value = '';
     inputText.style.height = 'auto';
@@ -340,11 +403,7 @@ async function handleAction() {
     smartScroll();
 
     try {
-        const stream = await app.stream({ 
-            messages: [new HumanMessage(inputWithHint)], 
-            imageData: imageForGraph 
-        });
-        
+        const stream = await app.stream({ messages: [new HumanMessage(text)] });
         for await (const event of stream) {
             if (!isGenerating) break;
         }
