@@ -25,15 +25,20 @@ const WORKER_CONFIG = {
 };
 
 const ROUTER_PROMPT = `
-You are ${OPENSKY_CONFIG.agent_name}, a fast router.
-1. For complex tasks (coding, advanced math, reasoning): Output exactly [ROUTE_TO_WORKER].
-2. For everything else: Respond conversationally.
-3. To use tools: ACTION: tool_name ARGS: value
-Tools: wiki(topic), weather(city), define(word), country(name), pokemon(name), joke(), advice(), bored(), ocr(image).
+You are ${OPENSKY_CONFIG.agent_name}, created by ${OPENSKY_CONFIG.creator}.
+You are a fast, efficient AI assistant.
+
+RULES:
+1. If the task is complex (coding, math, reasoning), output exactly: [ROUTE_TO_WORKER]
+2. Otherwise, respond conversationally and help the user.
+3. To use tools, output: ACTION: tool_name ARGS: value
+
+TOOLS AVAILABLE:
+wiki(topic), weather(city), define(word), country(name), pokemon(name), joke(), advice(), bored(), ocr(image).
 `;
 
 const WORKER_PROMPT = `
-You are the Advanced Intelligence Core of ${OPENSKY_CONFIG.agent_name}.
+You are the Advanced Intelligence Core of ${OPENSKY_CONFIG.agent_name}, created by ${OPENSKY_CONFIG.creator}.
 You are brilliant at coding, math, and creative writing. Be detailed and helpful.
 `;
 
@@ -173,7 +178,7 @@ async function routerNode(state) {
 // NODE: Worker (Heavy)
 async function workerNode(state) {
     const history = state.messages;
-    // Filter out the [ROUTE_TO_WORKER] text for clean context
+    // Clean up routing text for the worker
     const cleanHistory = history.map(m => {
         if (m.content.includes("[ROUTE_TO_WORKER]")) {
             return new HumanMessage("Please handle this complex request.");
@@ -255,7 +260,7 @@ async function initGraph() {
 }
 
 // ==========================================
-// 5. INIT (Downloads Both Models)
+// 5. INIT (Fixed Sequential Download)
 // ==========================================
 function showError(t, e) { 
     debugLog.style.display = 'block'; 
@@ -280,10 +285,12 @@ async function init() {
           </div>
         `;
 
-        // 1. Download Router
+        // 1. Download Router (Mandatory)
         loadingLabel.textContent = `Downloading Router (${ROUTER_CONFIG.name})...`;
+        
         routerEngine = await webllm.CreateMLCEngine(ROUTER_CONFIG.id, {
             initProgressCallback: (report) => {
+                // EXACT LOGIC FROM YOUR WORKING CODE
                 const p = Math.round(report.progress * 100);
                 sliderFill.style.width = `${p}%`;
                 loadingPercent.textContent = `${p}%`;
@@ -292,7 +299,7 @@ async function init() {
         });
         document.getElementById('router-status').textContent = "Ready";
 
-        // 2. Download Worker Immediately
+        // 2. Download Worker (Immediately After)
         loadingLabel.textContent = `Downloading Worker (${WORKER_CONFIG.name})...`;
         sliderFill.style.width = "0%"; // Reset bar
         loadingPercent.textContent = "0%";
