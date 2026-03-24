@@ -8,18 +8,19 @@ const OPENSKY_CONFIG = {
     creator: "Hafij Shaikh"
 };
 
-// MODEL 1: The Agent (Fast, Reasoning, Tools)
+// MODEL 1: Agent (Fast, Reasoning, Tools)
+// Using the specific ID requested.
+// Fallback: Qwen2.5-1.5B-Instruct (Base model) if ID not found.
 const AGENT_MODEL = {
-    id: "DeepSeek-R1-Distill-Qwen-1.5B-q4f16_1-MLC", 
-    name: "DeepSeek R1 1.5B",
-    role: "Agent"
+    id: "DeepSeek-R1-Distill-Qwen-1.5B-q4f16_1-MLC",
+    fallback_id: "Qwen2.5-1.5B-Instruct-q4f16_1-MLC",
+    name: "Agent",
 };
 
-// MODEL 2: The Worker (Smart, Creative, Complex)
-const WORKER_MODEL = {
-    id: "Llama-3-8B-Instruct-q4f16_1-MLC", 
-    name: "Llama-3 8B",
-    role: "Worker"
+// MODEL 2: Core (Smart, Creative, Complex)
+const CORE_MODEL = {
+    id: "Llama-3-8B-Instruct-q4f16_1-MLC",
+    name: "Core",
 };
 
 const AGENT_PROMPT = `
@@ -29,14 +30,14 @@ RULES:
 1. Think inside <think...</think tags.
 2. If the task is simple or requires tools: handle it yourself.
    - Tool format: ACTION: tool_name ARGS: value
-3. If the task is COMPLEX (coding, long essays, complex math): Output exactly: [ROUTE_TO_SMART]
+3. If the task is COMPLEX (coding, long essays, complex math): Output exactly: [ROUTE_TO_CORE]
    Then stop immediately.
 
 TOOLS:
 wiki(topic), weather(city), define(word), country(name), pokemon(name), joke(), advice(), bored().
 `;
 
-const WORKER_PROMPT = `
+const CORE_PROMPT = `
 You are the Advanced Intelligence Core of ${OPENSKY_CONFIG.agent_name}.
 You are brilliant, detailed, and creative. The user has a complex request that requires your superior processing power.
 Answer the user's request with high detail and quality.
@@ -65,7 +66,7 @@ const imagePreview = document.getElementById('imagePreview');
 const removeImageBtn = document.getElementById('removeImageBtn');
 
 let agentEngine = null;
-let workerEngine = null; // Lazy loaded
+let coreEngine = null; 
 let isGenerating = false;
 let currentImageBase64 = null; 
 
@@ -123,21 +124,20 @@ function parseToolAction(text) {
 }
 
 // ==========================================
-// 4. LOGIC
+// 4. LOGIC (ReAct Loop)
 // ==========================================
 
 function smartScroll() {
     messagesArea.scrollTop = messagesArea.scrollHeight;
 }
 
-// Creates the UI container for messages
 function createMessageUI(title) {
     const msgDiv = document.createElement('div');
     msgDiv.className = 'message assistant';
-
+    
     const panel = document.createElement('div');
     panel.className = 'agent-panel open';
-    panel.innerHTML = `<div class="agent-header"><span>${title}</span></div><div class="agent-body">Thinking...</div>`;
+    panel.innerHTML = `<div class="agent-header"><span>${title}</span><small style="opacity:0.5">▼</small></div><div class="agent-body">Processing...</div>`;
     panel.querySelector('.agent-header').onclick = () => panel.classList.toggle('open');
 
     const content = document.createElement('div');
@@ -147,14 +147,15 @@ function createMessageUI(title) {
     msgDiv.appendChild(content);
     messagesArea.appendChild(msgDiv);
     smartScroll();
-
+    
     return { msgDiv, content, panel };
 }
 
-// Main Agent Loop
 async function runAgentLoop(query) {
-    let msgDiv, content, panel;
-    
+    const { msgDiv, content, panel } = createMessageUI("⚡ Agent (DeepSeek)");
+    const status = panel.querySelector('span');
+    const body = panel.querySelector('.agent-body');
+
     try {
         const messages = [
             { role: "system", content: AGENT_PROMPT },
@@ -162,127 +163,100 @@ async function runAgentLoop(query) {
         ];
 
         if (currentImageBase64) {
-            messages.push({ role: "user", content: `[Image Uploaded] ${query}. (Describe it to yourself then proceed).` });
+            messages.push({ role: "user", content: `[Image Uploaded] ${query}. (Process description).` });
         } else {
             messages.push({ role: "user", content: query });
         }
 
-        // --- STEP 1: Agent Thinks ---
-        const ui = createMessageUI("⚡ Agent (DeepSeek R1)");
-        msgDiv = ui.msgDiv; content = ui.content; panel = ui.panel;
-        const status = panel.querySelector('span');
-        const body = panel.querySelector('.agent-body');
-
-        const stream = await agentEngine.chat.completions.create({
-            messages: messages,
-            temperature: 0.7,
-            stream: true
-        });
-
-        let agentText = "";
-        for await (const chunk of stream) {
-            if (!isGenerating) break;
-            const delta = chunk.choices[0].delta.content;
-            if (delta) {
-                agentText += delta;
-                body.textContent = agentText;
-                parseAndRender(agentText, content);
-                smartScroll();
-            }
-        }
-
-        // --- STEP 2: Decision ---
+        let loops = 0;
+        let finalResponse = "";
         
-        // Case A: Needs Smart Model
-        if (agentText.includes("[ROUTE_TO_SMART]")) {
-            status.textContent = "🧠 Handing off to Smart Core...";
-            body.textContent += "\n\n[Transferring to Llama-3 8B...]";
-            content.innerHTML += `<div class="tool-result">Task complexity high. Loading Smart Model...</div>`;
+        while (loops < 3) {
+            status.textContent = loops === 0 ? "⚡ Agent Reasoning..." : "🔧 Using Tool...";
             
-            // Lazy Load Worker
-            if (!workerEngine) {
-                content.innerHTML += `<div class="tool-result">Downloading Smart Model (one-time setup)...</div>`;
-                workerEngine = await webllm.CreateMLCEngine(WORKER_MODEL.id, {
-                    initProgressCallback: (report) => {
-                        // Simple inline progress for lazy load
-                        console.log(`Worker: ${Math.round(report.progress * 100)}%`);
-                    }
+            const completion = await agentEngine.chat.completions.create({
+                messages: messages,
+                temperature: 0.7,
+                repetition_penalty: 1.1,
+                stream: true
+            });
+
+            let currentChunk = "";
+            for await (const chunk of completion) {
+                if (!isGenerating) break;
+                const delta = chunk.choices[0].delta.content;
+                if (delta) {
+                    currentChunk += delta;
+                    body.textContent = currentChunk;
+                    parseAndRender(currentChunk, content);
+                    smartScroll();
+                }
+            }
+            
+            // Case A: Route to Core (Smart Model)
+            if (currentChunk.includes("[ROUTE_TO_CORE]")) {
+                status.textContent = "🧠 Routing to Core...";
+                body.textContent += "\n\n-> Handing off to Core Model...";
+                
+                // Load Core Engine if not loaded (should be loaded by init, but safety check)
+                if (!coreEngine) {
+                     content.innerHTML += `<div class="tool-result">Core Engine not ready. Please wait...</div>`;
+                     // We could await loading here, but init() handles it now.
+                     return; 
+                }
+
+                const coreMessages = [
+                    { role: "system", content: CORE_PROMPT },
+                    ...conversationHistory,
+                    { role: "user", content: query } // Send original query
+                ];
+
+                const coreUI = createMessageUI("🧠 Core (Llama-3 8B)");
+                const coreContent = coreUI.content;
+                const coreBody = coreUI.panel.querySelector('.agent-body');
+
+                const coreStream = await coreEngine.chat.completions.create({
+                    messages: coreMessages, temperature: 0.7, stream: true
                 });
-            }
 
-            // Call Worker
-            const workerMessages = [
-                { role: "system", content: WORKER_PROMPT },
-                ...conversationHistory,
-                { role: "user", content: query } // Send original query
-            ];
-
-            const workerUI = createMessageUI("🧠 Worker (Llama-3 8B)");
-            const workerContent = workerUI.content;
-            const workerBody = workerUI.panel.querySelector('.agent-body');
-
-            const workerStream = await workerEngine.chat.completions.create({
-                messages: workerMessages, temperature: 0.7, stream: true
-            });
-
-            let workerText = "";
-            for await (const chunk of workerStream) {
-                if (!isGenerating) break;
-                const delta = chunk.choices[0].delta.content;
-                if (delta) {
-                    workerText += delta;
-                    workerBody.textContent = workerText;
-                    parseAndRender(workerText, workerContent);
-                    smartScroll();
+                let coreText = "";
+                for await (const chunk of coreStream) {
+                    if (!isGenerating) break;
+                    const delta = chunk.choices[0].delta.content;
+                    if (delta) {
+                        coreText += delta;
+                        coreBody.textContent = coreText;
+                        parseAndRender(coreText, coreContent);
+                        smartScroll();
+                    }
                 }
+                
+                conversationHistory.push({ role: "user", content: query });
+                conversationHistory.push({ role: "assistant", content: coreText });
+                return;
             }
-            
-            conversationHistory.push({ role: "user", content: query });
-            conversationHistory.push({ role: "assistant", content: workerText });
-            return;
+
+            // Case B: Needs Tools
+            const toolCall = parseToolAction(currentChunk);
+            if (toolCall) {
+                status.textContent = "🔧 Using Tool...";
+                let toolResult;
+                if (Tools[toolCall.name]) toolResult = await Tools[toolCall.name](toolCall.args);
+                else toolResult = { text: "Unknown tool" };
+
+                content.innerHTML += `<div class="tool-result"><b>Tool Result:</b> ${toolResult.text}</div>`;
+                
+                messages.push({ role: "assistant", content: currentChunk });
+                messages.push({ role: "user", content: `OBSERVATION: ${JSON.stringify(toolResult.text)}. Now answer.` });
+                loops++;
+            } else {
+                finalResponse = currentChunk;
+                break;
+            }
         }
 
-        // Case B: Needs Tools
-        const toolCall = parseToolAction(agentText);
-        if (toolCall) {
-            status.textContent = "🔧 Using Tool...";
-            let toolResult;
-            if (Tools[toolCall.name]) toolResult = await Tools[toolCall.name](toolCall.args);
-            else toolResult = { text: "Unknown tool" };
-
-            content.innerHTML += `<div class="tool-result"><b>Tool Result:</b> ${toolResult.text}</div>`;
-            
-            // Feed back observation
-            messages.push({ role: "assistant", content: agentText });
-            messages.push({ role: "user", content: `OBSERVATION: ${JSON.stringify(toolResult.text)}. Now answer.` });
-            
-            // Stream final answer
-            status.textContent = "⚡ Final Answer...";
-            const finalStream = await agentEngine.chat.completions.create({
-                messages: messages, temperature: 0.7, stream: true
-            });
-            
-            let finalText = "";
-            body.textContent = ""; // Clear thoughts
-            for await (const chunk of finalStream) {
-                if (!isGenerating) break;
-                const delta = chunk.choices[0].delta.content;
-                if (delta) {
-                    finalText += delta;
-                    body.textContent = finalText;
-                    parseAndRender(finalText, content);
-                    smartScroll();
-                }
-            }
-            
-            conversationHistory.push({ role: "user", content: query });
-            conversationHistory.push({ role: "assistant", content: finalText });
-            return;
-        }
-
-        // Case C: Simple Answer
         conversationHistory.push({ role: "user", content: query });
-        conversationHistory.push({ role: "assistant", content: agentText });
+        conversationHistory.push({ role: "assistant", content: finalResponse });
 
     } catch (e) {
         if(content) content.innerHTML += `<span style="color:red">Error: ${e.message}</span>`;
@@ -298,10 +272,8 @@ async function runAgentLoop(query) {
 // ==========================================
 function parseAndRender(text, container) {
     let html = text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-    // Hide think tags in final render
     html = html.replace(/&lt;think&gt;[\s\S]*?&lt;\/think&gt;/g, ''); 
     
-    // Code
     html = html.replace(/```(\w+)?\n([\s\S]*?)```/g, (m, lang, code) => 
         `<div class="code-block"><div class="code-header"><span>${lang||'code'}</span><button class="copy-btn" onclick="copyCode(this)">Copy</button></div><div class="code-body"><pre>${code}</pre></div></div>`
     );
@@ -315,7 +287,7 @@ window.copyCode = (btn) => {
 };
 
 // ==========================================
-// 6. INITIALIZATION
+// 6. INITIALIZATION (Sequential Download)
 // ==========================================
 function showError(t, e) { 
     debugLog.style.display = 'block'; 
@@ -329,30 +301,57 @@ async function init() {
         if (!navigator.gpu) throw new Error("WebGPU not supported. Use Chrome.");
 
         modelStatusContainer.innerHTML = `
-          <div class="model-card">
+          <div class="model-card" id="card-agent">
             <div class="model-card-name">${AGENT_MODEL.name}</div>
-            <div class="model-card-desc" id="model-status">Waiting...</div>
+            <div class="model-card-desc" id="status-agent">Waiting...</div>
           </div>
-          <div class="model-card" style="opacity: 0.5">
-            <div class="model-card-name">${WORKER_MODEL.name}</div>
-            <div class="model-card-desc">Standby (Lazy Load)</div>
+          <div class="model-card" id="card-core">
+            <div class="model-card-name">${CORE_MODEL.name}</div>
+            <div class="model-card-desc" id="status-core">Queued...</div>
           </div>
         `;
 
-        loadingLabel.textContent = `Downloading Agent (${AGENT_MODEL.name})...`;
-        
-        agentEngine = await webllm.CreateMLCEngine(AGENT_MODEL.id, {
+        // --- 1. Load Agent (DeepSeek R1) ---
+        loadingLabel.textContent = `Loading Agent (DeepSeek R1)...`;
+        try {
+            agentEngine = await webllm.CreateMLCEngine(AGENT_MODEL.id, {
+                initProgressCallback: (report) => {
+                    const p = Math.round(report.progress * 100);
+                    // Fill 0% to 50% of the total bar
+                    sliderFill.style.width = `${p / 2}%`;
+                    loadingPercent.textContent = `${p}%`;
+                    document.getElementById('status-agent').textContent = report.text;
+                }
+            });
+        } catch (err) {
+            // Fallback if DeepSeek ID is not found
+            console.warn("DeepSeek R1 ID not found, falling back to Qwen2.5 Base Model.");
+            document.getElementById('status-agent').textContent = "Fallback (Qwen)";
+            agentEngine = await webllm.CreateMLCEngine(AGENT_MODEL.fallback_id, {
+                initProgressCallback: (report) => {
+                    const p = Math.round(report.progress * 100);
+                    sliderFill.style.width = `${p / 2}%`;
+                    loadingPercent.textContent = `${p}%`;
+                    document.getElementById('status-agent').textContent = report.text;
+                }
+            });
+        }
+        document.getElementById('status-agent').textContent = "Ready";
+
+        // --- 2. Load Core (Llama-3 8B) ---
+        loadingLabel.textContent = `Loading Core (Llama-3 8B)...`;
+        coreEngine = await webllm.CreateMLCEngine(CORE_MODEL.id, {
             initProgressCallback: (report) => {
                 const p = Math.round(report.progress * 100);
-                sliderFill.style.width = `${p}%`;
+                // Fill 50% to 100% of the total bar
+                sliderFill.style.width = `${50 + (p / 2)}%`;
                 loadingPercent.textContent = `${p}%`;
-                document.getElementById('model-status').textContent = report.text;
+                document.getElementById('status-core').textContent = report.text;
             }
         });
+        document.getElementById('status-core').textContent = "Ready";
 
-        document.getElementById('model-status').textContent = "Ready";
-
-        loadingLabel.textContent = "System Ready.";
+        loadingLabel.textContent = "System Online.";
         setTimeout(() => {
             loadingScreen.classList.add('hidden');
             chatContainer.classList.add('active');
@@ -386,7 +385,7 @@ async function handleAction() {
         isGenerating = false;
         sendBtn.classList.remove('stop-btn');
         if(agentEngine) await agentEngine.interruptGenerate();
-        if(workerEngine) await workerEngine.interruptGenerate();
+        if(coreEngine) await coreEngine.interruptGenerate();
         return;
     }
 
