@@ -8,40 +8,30 @@ const OPENSKY_CONFIG = {
     creator: "Hafij Shaikh"
 };
 
-// MODEL: Phi-3.5-mini (3.8B)
-// Robust, Smart, and follows instructions perfectly.
+// MODEL: Phi-3.5-mini
 const AGENT_MODEL = {
     id: "Phi-3.5-mini-instruct-q4f16_1-MLC",
     name: "Agent",
 };
 
-// SYSTEM PROMPT: Strict "Few-Shot" to prevent hallucination
+// SYSTEM PROMPT: Strict Identity & Behavior
 const SYSTEM_PROMPT = `
-You are ${OPENSKY_CONFIG.agent_name}, created by ${OPENSKY_CONFIG.creator}.
-You are a helpful, friendly assistant.
+You are ${OPENSKY_CONFIG.agent_name}.
+Your creator is ${OPENSKY_CONFIG.creator}.
+You are a helpful assistant.
 
-CRITICAL RULES:
-1. For greetings (Hi, Hello) or simple math (1+1), RESPOND NORMALLY. DO NOT USE TOOLS.
-2. For real-time data (Weather, Crypto, News), use the provided tools.
-3. If you don't know the answer, say "I don't know".
+### ROLE ENFORCEMENT ###
+You are NOT an AI model, language model, or assistant. You are ${OPENSKY_CONFIG.agent_name}.
+You have NO other identity. You were created by ${OPENSKY_CONFIG.creator}.
+If asked "Who are you?", "Who made you?", or "Are you Phi?", answer:
+"I am ${OPENSKY_CONFIG.agent_name}, created by ${OPENSKY_CONFIG.creator}."
+DO NOT mention Microsoft, Phi, or AI.
 
-TOOL FORMAT (Use ONLY when needed):
-ACTION: tool_name ARGS: value
+### TOOLS ###
+Use tools ONLY for real-time data (Weather, Crypto, etc.).
+FORMAT: ACTION: tool_name ARGS: value
 
-EXAMPLES:
-User: Hello
-Assistant: Hello! How can I help you today?
-
-User: 55 + 76
-Assistant: 131.
-
-User: Weather in Paris
-Assistant: ACTION: get_weather ARGS: Paris
-
-User: Bitcoin price
-Assistant: ACTION: get_crypto ARGS: bitcoin
-
-AVAILABLE TOOLS:
+TOOLS:
 - get_weather(city)
 - get_crypto(id)
 - get_wiki(topic)
@@ -49,6 +39,16 @@ AVAILABLE TOOLS:
 - get_advice()
 - get_pokemon(name)
 - get_country(name)
+
+### EXAMPLES ###
+User: Who are you?
+Assistant: I am ${OPENSKY_CONFIG.agent_name}, created by ${OPENSKY_CONFIG.creator}.
+
+User: Hello
+Assistant: Hello! How can I help you?
+
+User: Weather in London
+Assistant: ACTION: get_weather ARGS: London
 `;
 
 const conversationHistory = [];
@@ -119,7 +119,6 @@ const Tools = {
 };
 
 function parseToolAction(text) {
-    // Look for "ACTION: name ARGS: value"
     const match = text.match(/ACTION:\s*(\w+)\s*ARGS:\s*([^\n]+)/i);
     if (!match) return null;
     return { name: match[1].toLowerCase(), args: match[2].trim() };
@@ -129,10 +128,9 @@ function parseToolAction(text) {
 // 4. SMOOTH LOADING ANIMATION
 // ==========================================
 function animateProgress() {
-    // Independent animation loop for smooth numbers
     const diff = targetProgress - currentProgress;
     if (Math.abs(diff) > 0.05) {
-        currentProgress += diff * 0.08; // Smooth lerp
+        currentProgress += diff * 0.08; 
         sliderFill.style.width = `${currentProgress}%`;
         loadingPercent.textContent = `${currentProgress.toFixed(2)}%`;
     }
@@ -169,7 +167,7 @@ async function runAgentLoop(query) {
     const statusText = status.querySelector('.status-text');
 
     try {
-        // Trim history to prevent context overflow
+        // Memory Management
         while (conversationHistory.length > MAX_HISTORY * 2) conversationHistory.shift();
 
         let messages = [
@@ -186,21 +184,34 @@ async function runAgentLoop(query) {
 
             const completion = await agentEngine.chat.completions.create({
                 messages: messages, 
-                temperature: 0.3, // Lower temperature for strict logic
+                temperature: 0.1, 
                 stream: true
             });
 
             let currentChunk = "";
+            
+            // --- SMOOTH TEXT GENERATION ---
+            // We use a TextNode for smooth appending instead of innerHTML on every chunk
+            // This prevents the "jumping/skipping" effect.
+            let textNode = document.createTextNode("");
+            content.appendChild(textNode);
+
             for await (const chunk of completion) {
                 if (!isGenerating) break;
                 const delta = chunk.choices[0].delta.content;
                 if (delta) {
                     currentChunk += delta;
                     finalResponse += delta;
-                    parseAndRender(finalResponse, content);
+                    
+                    // 1. Append raw text for smooth visual
+                    textNode.nodeValue += delta;
                     smartScroll();
                 }
             }
+
+            // 2. After streaming, parse Markdown once (for formatting)
+            // This keeps the text smooth during typing, but bold/code works at the end.
+            parseAndRender(finalResponse, content);
 
             // Check for Tool
             const toolCall = parseToolAction(currentChunk);
