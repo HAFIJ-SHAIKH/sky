@@ -37,16 +37,18 @@ body { font-family: 'Inter', sans-serif; color: var(--text-main); height: 100dvh
 .message { display: flex; flex-direction: column; animation: fadeUp 0.3s ease; width: 100%; }
 @keyframes fadeUp { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
 
+/* User Bubble */
 .message.user { align-items: flex-end; }
 .user-bubble { background: #000; color: white; padding: 0.75rem 1rem; border-radius: 16px 16px 4px 16px; max-width: 70%; font-size: 0.9rem; }
 
+/* Assistant NO BUBBLE */
 .message.assistant { align-items: flex-start; padding-left: 0.5rem; }
 .assistant-content { font-size: 0.95rem; line-height: 1.6; max-width: 85%; }
 
-/* Blinking Status Dot */
+/* Status & BLINKING ANIMATION */
 .agent-status { font-size: 0.7rem; color: #888; margin-bottom: 0.25rem; display: flex; align-items: center; gap: 0.5rem; }
 .agent-status-dot { 
-  width: 8px; height: 8px; background: #000; border-radius: 50%; 
+  width: 6px; height: 6px; background: #000; border-radius: 50%; 
   animation: blink 1s infinite; 
 }
 @keyframes blink { 
@@ -55,16 +57,19 @@ body { font-family: 'Inter', sans-serif; color: var(--text-main); height: 100dvh
   100% { opacity: 1; } 
 }
 
+/* Badges */
 .verified-badge { font-size: 0.65rem; color: #059669; margin-top: 0.25rem; font-weight: 600; }
 .corrected-badge { font-size: 0.65rem; color: #d97706; margin-top: 0.25rem; font-weight: 600; }
 
+/* Code & Tools */
 .code-block { background: #1e293b; border-radius: 6px; margin: 0.5rem 0; overflow: hidden; color: #fff; }
-.code-header { background: #334155; padding: 0.4rem 0.8rem; font-size: 0.7rem; display: flex; justify-content: space-between; }
+.code-header { background: #334155; padding: 0.4rem 0.8rem; font-size: 0.7rem; display: flex; justify-content: space-between; align-items: center; }
 .code-body { padding: 0.8rem; font-family: 'JetBrains Mono', monospace; font-size: 0.8rem; overflow-x: auto; white-space: pre; }
 .copy-btn { background: #475569; border: none; color: white; padding: 2px 6px; border-radius: 4px; font-size: 0.6rem; cursor: pointer; }
 .tool-result { background: #f0f0f0; border-left: 2px solid #000; padding: 0.5rem; margin-top: 0.5rem; font-size: 0.85rem; border-radius: 4px; }
 .tool-result img { max-width: 100%; border-radius: 4px; margin-top: 0.5rem; display: block; }
 
+/* Input */
 .input-area { padding: 1rem 1.5rem; background: white; border-top: 1px solid var(--border); padding-bottom: calc(1rem + env(safe-area-inset-bottom)); }
 .input-wrapper { display: flex; background: #fafafa; border: 1px solid var(--border); border-radius: 20px; padding: 0.5rem; padding-left: 1rem; align-items: center; }
 .input-wrapper:focus-within { border-color: #000; }
