@@ -14,8 +14,8 @@ const AGENT_MODEL = {
     name: "Agent",
 };
 
-// CORE: Phi-3.5-Mini (Smart ~4B)
-// Uses ~2.5GB VRAM. Total usage ~4.5GB (Fits most GPUs).
+// CORE: Phi-3.5-Mini (~4B Parameters)
+// Uses ~2.5GB VRAM. Total ~4.5GB combined.
 const CORE_MODEL = {
     id: "Phi-3.5-mini-instruct-q4f16_1-MLC",
     name: "Core",
@@ -28,9 +28,11 @@ If you need tools: ACTION: tool_name ARGS: value
 Tools: wiki(topic), weather(city), pokemon(name), country(name), define(word), joke(), advice(), bored().
 `;
 
-const CORE_PROMPT = `
+// CORE PROMPT is now passed as a USER message to avoid API errors
+const CORE_PROMPT_TEMPLATE = `
 You are the Core Intelligence of ${OPENSKY_CONFIG.agent_name}, created by ${OPENSKY_CONFIG.creator}.
 You are reviewing a draft from the Agent.
+
 User Query: {{QUERY}}
 Agent Draft: {{DRAFT}}
 
@@ -61,14 +63,14 @@ let agentEngine = null;
 let coreEngine = null;
 let isGenerating = false;
 
-// For smooth percentage
+// Smooth Progress
 let currentProgress = 0;
 let targetProgress = 0;
 let progressInterval;
 
 function updateProgressSmoothly() {
     if (currentProgress < targetProgress) {
-        currentProgress += 0.1; // Smooth step
+        currentProgress += 0.1; 
         if (currentProgress > targetProgress) currentProgress = targetProgress;
         sliderFill.style.width = `${currentProgress}%`;
         loadingPercent.textContent = `${currentProgress.toFixed(2)}%`;
@@ -140,8 +142,15 @@ function createMessageDiv() {
     
     const status = document.createElement('div');
     status.className = 'agent-status';
-    // Restored Blinking Animation
-    status.innerHTML = `<span class="agent-status-dot"></span><span class="status-text">Drafting...</span>`;
+    // Explicitly creating elements to ensure animation class is applied
+    const dot = document.createElement('span');
+    dot.className = 'agent-status-dot';
+    const text = document.createElement('span');
+    text.className = 'status-text';
+    text.textContent = "Drafting...";
+    
+    status.appendChild(dot);
+    status.appendChild(text);
     
     const content = document.createElement('div');
     content.className = 'assistant-content';
@@ -151,12 +160,11 @@ function createMessageDiv() {
     messagesArea.appendChild(msgDiv);
     smartScroll();
     
-    return { msgDiv, content, status };
+    return { msgDiv, content, status, statusText: text };
 }
 
 async function runAgentLoop(query) {
-    const { msgDiv, content, status } = createMessageDiv();
-    const statusText = status.querySelector('.status-text');
+    const { msgDiv, content, status, statusText } = createMessageDiv();
 
     try {
         // --- PHASE 1: AGENT (Drafting) ---
@@ -169,11 +177,6 @@ async function runAgentLoop(query) {
         let agentText = "";
         let loops = 0;
         let toolUsed = false;
-
-        // Start Core in Parallel (Pre-loading context)
-        // We assume simple queries won't need tools, so we start Core now.
-        // If tools are used, Core's compute is wasted, but it's cheap for Phi-3.5
-        let corePromise = null;
 
         while (loops < 3) {
             const completion = await agentEngine.chat.completions.create({
@@ -213,32 +216,27 @@ async function runAgentLoop(query) {
         }
 
         // --- PHASE 2: CORE (Refining) ---
-        // If tools were used, Agent is usually accurate. Skip Core to save time.
-        if (!toolUsed) {
+        if (!toolUsed && isGenerating) {
             statusText.textContent = "Refining...";
             
-            const corePromptText = CORE_PROMPT.replace("{{QUERY}}", query).replace("{{DRAFT}}", agentText);
+            // FIX: Send as 'user' message to prevent "Last message should be from user" error
+            const coreInput = CORE_PROMPT_TEMPLATE.replace("{{QUERY}}", query).replace("{{DRAFT}}", agentText);
             
             const coreMessages = [
-                { role: "system", content: corePromptText }
+                { role: "user", content: coreInput }
             ];
 
-            // Run Core
-            corePromise = coreEngine.chat.completions.create({
+            const coreCompletion = await coreEngine.chat.completions.create({
                 messages: coreMessages, temperature: 0.3, max_tokens: 1000
             });
 
-            const coreCompletion = await corePromise;
             const coreText = coreCompletion.choices[0].message.content.trim();
 
-            // Check Result
             if (coreText !== "[OK]") {
-                // CORE CORRECTED IT
                 parseAndRender(coreText, content);
                 content.innerHTML += `<div class="corrected-badge">✨ Refined by Core</div>`;
-                agentText = coreText; // Save corrected text to history
+                agentText = coreText; 
             } else {
-                // CORE APPROVED
                 content.innerHTML += `<div class="verified-badge">✓ Verified</div>`;
             }
         }
@@ -249,7 +247,8 @@ async function runAgentLoop(query) {
         status.style.display = 'none';
 
     } catch (e) {
-        content.innerHTML += `<span style="color:red">Error: ${e.message}</span>`;
+        content.innerHTML += `<span style="color:red; display:block; margin-top:5px;">Error: ${e.message}</span>`;
+        console.error(e);
     } finally {
         isGenerating = false;
         sendBtn.classList.remove('stop-btn');
@@ -301,26 +300,25 @@ async function init() {
           </div>
         `;
 
-        // Start smooth updater
         clearInterval(progressInterval);
         progressInterval = setInterval(updateProgressSmoothly, 50);
 
-        // 1. Download Agent (0% -> 50%)
+        // 1. Download Agent
         loadingLabel.textContent = `Loading Agent...`;
         agentEngine = await webllm.CreateMLCEngine(AGENT_MODEL.id, {
             initProgressCallback: (report) => {
-                targetProgress = report.progress * 50; // 0 to 50
+                targetProgress = report.progress * 50;
                 document.getElementById('status-agent').textContent = report.text;
             }
         });
         document.getElementById('status-agent').textContent = "Ready";
-        currentProgress = 50; // Snap to 50
+        currentProgress = 50;
 
-        // 2. Download Core (50% -> 100%)
+        // 2. Download Core
         loadingLabel.textContent = `Loading Core...`;
         coreEngine = await webllm.CreateMLCEngine(CORE_MODEL.id, {
             initProgressCallback: (report) => {
-                targetProgress = 50 + (report.progress * 50); // 50 to 100
+                targetProgress = 50 + (report.progress * 50);
                 document.getElementById('status-core').textContent = report.text;
             }
         });
