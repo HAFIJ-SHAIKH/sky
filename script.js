@@ -8,14 +8,13 @@ const OPENSKY_CONFIG = {
     creator: "Hafij Shaikh"
 };
 
-// AGENT: Qwen2.5-1.5B (Fast & Light)
+// AGENT: Qwen2.5-1.5B (Fast, Smart enough for draft)
 const AGENT_MODEL = {
     id: "Qwen2.5-1.5B-Instruct-q4f16_1-MLC",
     name: "Agent",
 };
 
-// CORE: Phi-3.5-Mini (~4B Parameters)
-// Uses ~2.5GB VRAM. Total ~4.5GB combined.
+// CORE: Phi-3.5-Mini (3.8B - The ~4B Model you requested)
 const CORE_MODEL = {
     id: "Phi-3.5-mini-instruct-q4f16_1-MLC",
     name: "Core",
@@ -23,27 +22,20 @@ const CORE_MODEL = {
 
 const AGENT_PROMPT = `
 You are ${OPENSKY_CONFIG.agent_name}, created by ${OPENSKY_CONFIG.creator}.
-You are the fast drafter. Write a quick response.
+You are a fast drafting assistant. Write a quick response.
 If you need tools: ACTION: tool_name ARGS: value
 Tools: wiki(topic), weather(city), pokemon(name), country(name), define(word), joke(), advice(), bored().
 `;
 
-// CORE PROMPT is now passed as a USER message to avoid API errors
-const CORE_PROMPT_TEMPLATE = `
+const CORE_SYSTEM_PROMPT = `
 You are the Core Intelligence of ${OPENSKY_CONFIG.agent_name}, created by ${OPENSKY_CONFIG.creator}.
-You are reviewing a draft from the Agent.
-
-User Query: {{QUERY}}
-Agent Draft: {{DRAFT}}
-
-RULES:
-1. If the Draft is perfect, output ONLY: [OK]
-2. If the Draft has errors or is incomplete, output the CORRECTED, FINAL response.
-3. Do not repeat the Draft. Just give the final answer.
+You verify the Agent's draft. 
+If the draft is good, output [OK].
+If the draft is wrong or can be improved, output the corrected answer.
 `;
 
 const conversationHistory = [];
-const MAX_HISTORY = 40; // Increased Memory
+const MAX_HISTORY = 40; 
 
 // ==========================================
 // 2. DOM
@@ -63,15 +55,123 @@ let agentEngine = null;
 let coreEngine = null;
 let isGenerating = false;
 
-// Smooth Progress
+// Smooth Progress Variables
 let currentProgress = 0;
 let targetProgress = 0;
 let progressInterval;
 
 function updateProgressSmoothly() {
-    if (currentProgress < targetProgress) {
-        currentProgress += 0.1; 
-        if (currentProgress > targetProgress) currentProgress = targetProgress;
+    if (Math.abs(currentProgress - targetProgress) > 0.1) {
+        currentProgress += (targetProgress - currentProgress) * 0.1; 
+        sliderFill.style.width = `${currentProgress}%`;
+        loadingPercent.textContent = `${currentProgress.toFixed(2)}%`;
+    }
+}
+
+// ==========================================
+// 3. TOOLS
+// ==========================================
+const Tools = {
+    wiki: async (q) => {
+        const res = await fetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(q)}`);
+        const d = await res.json();
+        return { text: d.extract, image: d.thumbnail?.source };
+    },
+    weather: async (city) => {
+        const geo = await (await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(city)}`)).json();
+        if(!geo.results?.[0]) return { text: "City not found" };
+        const { latitude, longitude, name } = geo.results[0];
+        const w = await (await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current_weather=true`)).json();
+        return { text: `Weather in ${name}: ${w.current_weather.temperature}°C` };
+    },
+    define: async (word) => {
+        try {
+            const res = await fetch(`https://api.dictionaryapi.dev/api/v2/entries/en/${word}`);
+            const d = await res.json();
+            return { text: d[0].meanings[0].definitions[0].definition };
+        } catch { return { text: "Not found" }; }
+    },
+    pokemon: async (name) => {
+        const res = await fetch(`https://pokeapi.co/api/v2/pokemon/${name.toLowerCase()}`);
+        const d = await res.json();
+        return { text: `#${d.id} ${d.name}`, image: d.sprites?.front_default };
+    },
+    country: async (name) => {
+        const res = await fetch(`https://restcountries.com/v3.1/name/${name}`);
+        const d = await res.json();
+        return { text: `${d[0].name.common}, Capital: ${d[0].capital}`, image: d[0].flags?.svg };
+    },
+    joke: async () => {
+        const d = await (await fetch(`https://esm.run/@mlc-ai/web-llm";
+import { StateGraph, END } from "https://esm.run/@langchain/langgraph";
+import { HumanMessage, AIMessage } from "https://esm.run/@langchain/core/messages";
+
+// ==========================================
+// 1. CONFIGURATION
+// ==========================================
+const OPENSKY_CONFIG = {
+    agent_name: "Opensky",
+    creator: "Hafij Shaikh"
+};
+
+// AGENT: Qwen2.5-1.5B (Fast, Smart enough for draft)
+const AGENT_MODEL = {
+    id: "Qwen2.5-1.5B-Instruct-q4f16_1-MLC",
+    name: "Agent",
+};
+
+// CORE: Phi-3.5-Mini (3.8B - The ~4B Model you requested)
+// Uses ~2.8GB VRAM. Total usage with Agent is under 5GB.
+const CORE_MODEL = {
+    id: "Phi-3.5-mini-instruct-q4f16_1-MLC",
+    name: "Core",
+};
+
+// PROMPTS
+const AGENT_PROMPT = `
+You are ${OPENSKY_CONFIG.agent_name}, created by ${OPENSKY_CONFIG.creator}.
+You are a fast drafting assistant. Write a quick response.
+If you need tools: ACTION: tool_name ARGS: value
+Tools: wiki(topic), weather(city), pokemon(name), country(name), define(word), joke(), advice(), bored().
+`;
+
+const CORE_SYSTEM_PROMPT = `
+You are the Core Intelligence of ${OPENSKY_CONFIG.agent_name}, created by ${OPENSKY_CONFIG.creator}.
+You verify the Agent's draft. 
+If the draft is good, output [OK].
+If the draft is wrong or can be improved, output the corrected answer.
+`;
+
+const conversationHistory = [];
+const MAX_HISTORY = 40; 
+
+// ==========================================
+// 2. DOM
+// ==========================================
+const loadingScreen = document.getElementById('loadingScreen');
+const chatContainer = document.getElementById('chatContainer');
+const messagesArea = document.getElementById('messagesArea');
+const inputText = document.getElementById('inputText');
+const sendBtn = document.getElementById('sendBtn');
+const sliderFill = document.getElementById('sliderFill');
+const loadingPercent = document.getElementById('loadingPercent');
+const loadingLabel = document.getElementById('loadingLabel');
+const modelStatusContainer = document.getElementById('modelStatusContainer');
+const debugLog = document.getElementById('debugLog');
+
+let agentEngine = null;
+let coreEngine = null;
+let isGenerating = false;
+
+// Smooth Progress Variables
+let currentProgress = 0;
+let targetProgress = 0;
+let progressInterval;
+
+function updateProgressSmoothly() {
+    if (Math.abs(currentProgress - targetProgress) > 0.1) {
+        // Ease out animation
+        currentProgress += (targetProgress - currentProgress) * 0.1; 
         sliderFill.style.width = `${currentProgress}%`;
         loadingPercent.textContent = `${currentProgress.toFixed(2)}%`;
     }
@@ -142,15 +242,8 @@ function createMessageDiv() {
     
     const status = document.createElement('div');
     status.className = 'agent-status';
-    // Explicitly creating elements to ensure animation class is applied
-    const dot = document.createElement('span');
-    dot.className = 'agent-status-dot';
-    const text = document.createElement('span');
-    text.className = 'status-text';
-    text.textContent = "Drafting...";
-    
-    status.appendChild(dot);
-    status.appendChild(text);
+    // Added the dot class
+    status.innerHTML = `<span class="agent-status-dot"></span><span class="status-text">Drafting...</span>`;
     
     const content = document.createElement('div');
     content.className = 'assistant-content';
@@ -160,14 +253,15 @@ function createMessageDiv() {
     messagesArea.appendChild(msgDiv);
     smartScroll();
     
-    return { msgDiv, content, status, statusText: text };
+    return { msgDiv, content, status };
 }
 
 async function runAgentLoop(query) {
-    const { msgDiv, content, status, statusText } = createMessageDiv();
+    const { msgDiv, content, status } = createMessageDiv();
+    const statusText = status.querySelector('.status-text');
 
     try {
-        // --- PHASE 1: AGENT (Drafting) ---
+        // --- 1. AGENT PROCESS (Drafting) ---
         let agentMessages = [
             { role: "system", content: AGENT_PROMPT },
             ...conversationHistory,
@@ -215,15 +309,17 @@ async function runAgentLoop(query) {
             }
         }
 
-        // --- PHASE 2: CORE (Refining) ---
-        if (!toolUsed && isGenerating) {
+        // --- 2. CORE PROCESS (Refining) ---
+        // We only run Core if no tools were used (Tools are usually accurate)
+        if (!toolUsed) {
             statusText.textContent = "Refining...";
             
-            // FIX: Send as 'user' message to prevent "Last message should be from user" error
-            const coreInput = CORE_PROMPT_TEMPLATE.replace("{{QUERY}}", query).replace("{{DRAFT}}", agentText);
-            
+            // FIX: Construct proper User message for Core
+            // We don't pass the whole history to Core to save tokens/time, just the current context.
+            // This prevents the "Last message should be user" error.
             const coreMessages = [
-                { role: "user", content: coreInput }
+                { role: "system", content: CORE_SYSTEM_PROMPT },
+                { role: "user", content: `User Query: ${query}\n\nAgent Draft: ${agentText}\n\nReview this draft. Output [OK] if good, or the corrected answer.` }
             ];
 
             const coreCompletion = await coreEngine.chat.completions.create({
@@ -233,10 +329,12 @@ async function runAgentLoop(query) {
             const coreText = coreCompletion.choices[0].message.content.trim();
 
             if (coreText !== "[OK]") {
+                // CORE CORRECTED IT
                 parseAndRender(coreText, content);
                 content.innerHTML += `<div class="corrected-badge">✨ Refined by Core</div>`;
-                agentText = coreText; 
+                agentText = coreText; // Save corrected text to history
             } else {
+                // CORE APPROVED
                 content.innerHTML += `<div class="verified-badge">✓ Verified</div>`;
             }
         }
@@ -300,41 +398,45 @@ async function init() {
           </div>
         `;
 
+        // Start smooth updater
         clearInterval(progressInterval);
-        progressInterval = setInterval(updateProgressSmoothly, 50);
+        progressInterval = setInterval(updateProgressSmoothly, 30);
 
-        // 1. Download Agent
+        // 1. Download Agent (0% -> 50%)
         loadingLabel.textContent = `Loading Agent...`;
         agentEngine = await webllm.CreateMLCEngine(AGENT_MODEL.id, {
             initProgressCallback: (report) => {
-                targetProgress = report.progress * 50;
+                targetProgress = report.progress * 50; 
                 document.getElementById('status-agent').textContent = report.text;
             }
         });
         document.getElementById('status-agent').textContent = "Ready";
-        currentProgress = 50;
+        currentProgress = 50; targetProgress = 50; // Snap to 50
 
-        // 2. Download Core
+        // 2. Download Core (50% -> 100%)
         loadingLabel.textContent = `Loading Core...`;
         coreEngine = await webllm.CreateMLCEngine(CORE_MODEL.id, {
             initProgressCallback: (report) => {
-                targetProgress = 50 + (report.progress * 50);
+                targetProgress = 50 + (report.progress * 50); 
                 document.getElementById('status-core').textContent = report.text;
             }
         });
         document.getElementById('status-core').textContent = "Ready";
         
-        clearInterval(progressInterval);
-        currentProgress = 100;
-        sliderFill.style.width = `100%`;
-        loadingPercent.textContent = `100.00%`;
+        // Finish animation
+        targetProgress = 100;
+        setTimeout(() => {
+            clearInterval(progressInterval);
+            sliderFill.style.width = `100%`;
+            loadingPercent.textContent = `100.00%`;
+        }, 500);
 
         loadingLabel.textContent = "System Online.";
         setTimeout(() => {
             loadingScreen.classList.add('hidden');
             chatContainer.classList.add('active');
             sendBtn.disabled = false;
-        }, 500);
+        }, 800);
 
     } catch (e) { 
         clearInterval(progressInterval);
