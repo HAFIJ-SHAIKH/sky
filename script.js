@@ -8,40 +8,82 @@ const OPENSKY_CONFIG = {
     creator: "Hafij Shaikh"
 };
 
-// MODEL: Qwen 2.5 3B
 const AGENT_MODEL = {
     id: "Qwen2.5-3B-Instruct-q4f16_1-MLC",
     name: "Agent",
 };
 
-// SYSTEM PROMPT: Grounded & Stable
+// MCP-STYLE TOOL SCHEMA (Stable for small models)
+const TOOL_SCHEMA = `
+You have access to the following functions:
+
+{
+  "name": "get_weather",
+  "description": "Get current weather for a city",
+  "parameters": { "city": "string" }
+}
+{
+  "name": "get_wiki",
+  "description": "Get Wikipedia summary",
+  "parameters": { "topic": "string" }
+}
+{
+  "name": "get_crypto",
+  "description": "Get crypto price (use ids: bitcoin, ethereum)",
+  "parameters": { "id": "string" }
+}
+{
+  "name": "get_joke",
+  "description": "Get a random joke",
+  "parameters": {}
+}
+{
+  "name": "get_advice",
+  "description": "Get random advice",
+  "parameters": {}
+}
+{
+  "name": "get_pokemon",
+  "description": "Get Pokemon info",
+  "parameters": { "name": "string" }
+}
+{
+  "name": "get_country",
+  "description": "Get country info",
+  "parameters": { "name": "string" }
+}
+{
+  "name": "get_definition",
+  "description": "Define a word",
+  "parameters": { "word": "string" }
+}
+{
+  "name": "get_bored_activity",
+  "description": "Get a random activity",
+  "parameters": {}
+}
+
+TO USE A FUNCTION:
+Reply ONLY with the JSON object: {"name": "function_name", "arguments": {"param": "value"}}.
+Do NOT output any other text when using a function.
+`;
+
+// SYSTEM PROMPT
 const SYSTEM_PROMPT = `
-You are ${OPENSKY_CONFIG.agent_name}, a helpful AI assistant created by ${OPENSKY_CONFIG.creator}.
+You are ${OPENSKY_CONFIG.agent_name}, created by ${OPENSKY_CONFIG.creator}.
 
-Your purpose is to assist the user by answering questions, solving problems, and performing tasks.
-You must respond in the language the user uses.
-Keep your answers concise and relevant.
+CRITICAL RULES:
+1. Respond ONLY in the language the user speaks.
+2. NEVER generate random text, code, or symbols.
+3. If you don't know the answer, say "I don't know".
+4. If you need real-time data, use the provided functions.
+5. Keep responses brief.
 
-TOOL USAGE:
-If you need real-time information, use a tool by outputting this exact format:
-ACTION: tool_name ARGS: value
-
-AVAILABLE TOOLS:
-- wiki(topic)
-- weather(city)
-- pokemon(name)
-- country(name)
-- define(word)
-- joke()
-- advice()
-- bored()
-- crypto(coin_id)
-
-If you use a tool, stop immediately after the ACTION line.
+ ${TOOL_SCHEMA}
 `;
 
 const conversationHistory = [];
-const MAX_HISTORY = 20; // Keep short to prevent context drift
+const MAX_HISTORY = 10; // VERY short to prevent drift
 
 // ==========================================
 // 2. DOM & STATE
@@ -60,7 +102,7 @@ const debugLog = document.getElementById('debugLog');
 let agentEngine = null;
 let isGenerating = false;
 
-// Smooth Progress State
+// Smooth Progress
 let currentProgress = 0;
 let targetProgress = 0;
 let animationFrameId = null;
@@ -69,59 +111,73 @@ let animationFrameId = null;
 // 3. TOOLS
 // ==========================================
 const Tools = {
-    wiki: async (q) => {
-        const res = await fetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(q)}`);
-        const d = await res.json();
-        return { text: d.extract, image: d.thumbnail?.source };
-    },
-    weather: async (city) => {
+    get_weather: async (args) => {
+        const city = args.city;
         const geo = await (await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(city)}`)).json();
         if(!geo.results?.[0]) return { text: "City not found" };
         const { latitude, longitude, name } = geo.results[0];
         const w = await (await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current_weather=true`)).json();
         return { text: `Weather in ${name}: ${w.current_weather.temperature}°C` };
     },
-    define: async (word) => {
-        try {
-            const res = await fetch(`https://api.dictionaryapi.dev/api/v2/entries/en/${word}`);
-            const d = await res.json();
-            return { text: d[0].meanings[0].definitions[0].definition };
-        } catch { return { text: "Not found" }; }
+    get_wiki: async (args) => {
+        const topic = args.topic;
+        const res = await fetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(topic)}`);
+        const d = await res.json();
+        return { text: d.extract, image: d.thumbnail?.source };
     },
-    pokemon: async (name) => {
+    get_crypto: async (args) => {
+        const id = args.id;
+        const res = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${id}&vs_currencies=usd`);
+        const d = await res.json();
+        if(d[id]) return { text: `${id} is $${d[id].usd}` };
+        return { text: "Coin not found" };
+    },
+    get_joke: async () => {
+        const d = await (await fetch("https://v2.jokeapi.dev/joke/Any?type=single")).json();
+        return { text: d.joke };
+    },
+    get_advice: async () => {
+        const d = JSON.parse(await (await fetch("https://api.adviceslip.com/advice")).text());
+        return { text: d.slip.advice };
+    },
+    get_pokemon: async (args) => {
+        const name = args.name;
         const res = await fetch(`https://pokeapi.co/api/v2/pokemon/${name.toLowerCase()}`);
         const d = await res.json();
         return { text: `#${d.id} ${d.name}`, image: d.sprites?.front_default };
     },
-    country: async (name) => {
+    get_country: async (args) => {
+        const name = args.name;
         const res = await fetch(`https://restcountries.com/v3.1/name/${name}`);
         const d = await res.json();
         return { text: `${d[0].name.common}, Capital: ${d[0].capital}`, image: d[0].flags?.svg };
     },
-    joke: async () => {
-        const d = await (await fetch("https://v2.jokeapi.dev/joke/Any?type=single")).json();
-        return { text: d.joke };
+    get_definition: async (args) => {
+        try {
+            const res = await fetch(`https://api.dictionaryapi.dev/api/v2/entries/en/${args.word}`);
+            const d = await res.json();
+            return { text: d[0].meanings[0].definitions[0].definition };
+        } catch { return { text: "Not found" }; }
     },
-    advice: async () => {
-        const d = JSON.parse(await (await fetch("https://api.adviceslip.com/advice")).text());
-        return { text: d.slip.advice };
-    },
-    bored: async () => {
+    get_bored_activity: async () => {
         const d = await (await fetch("https://www.boredapi.com/api/activity")).json();
         return { text: d.activity };
-    },
-    crypto: async (id) => {
-        const res = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${id}&vs_currencies=usd`);
-        const d = await res.json();
-        if(d[id]) return { text: `${id} is $${d[id].usd}` };
-        return { text: "Coin not found (use ids like bitcoin, ethereum)" };
     }
 };
 
-function parseToolAction(text) {
-    const match = text.match(/ACTION:\s*(\w+)\s*ARGS:\s*([^\n]+)/i);
-    if (!match) return null;
-    return { name: match[1].toLowerCase(), args: match[2].trim() };
+// Robust JSON parser for MCP output
+function tryParseToolCall(text) {
+    try {
+        // Try to find a JSON object in the output
+        const jsonMatch = text.match(/\{[\s\S]*"name"\s*:\s*"[\w_]+"\s*,\s*"arguments"\s*:\s*\{[\s\S]*\}\s*\}/);
+        if (jsonMatch) {
+            const obj = JSON.parse(jsonMatch[0]);
+            if (obj.name && obj.arguments) {
+                return { name: obj.name, args: obj.arguments };
+            }
+        }
+    } catch (e) { /* Ignore parse errors */ }
+    return null;
 }
 
 // ==========================================
@@ -134,9 +190,7 @@ function animateProgress() {
         sliderFill.style.width = `${currentProgress}%`;
         loadingPercent.textContent = `${currentProgress.toFixed(2)}%`;
     }
-    if (currentProgress < 100 || diff > 0) {
-        animationFrameId = requestAnimationFrame(animateProgress);
-    }
+    animationFrameId = requestAnimationFrame(animateProgress);
 }
 
 // ==========================================
@@ -169,9 +223,10 @@ async function runAgentLoop(query) {
     const statusText = status.querySelector('.status-text');
 
     try {
-        // Ensure history doesn't overflow context window (Prevents Gibberish)
+        // AGGRESSIVE MEMORY MANAGEMENT
+        // If history is too long, model will crash/hallucinate
         while (conversationHistory.length > MAX_HISTORY * 2) {
-            conversationHistory.splice(0, 2); 
+            conversationHistory.splice(0, 2); // Remove oldest turn
         }
 
         let messages = [
@@ -183,14 +238,14 @@ async function runAgentLoop(query) {
         let finalResponse = "";
         let loops = 0;
 
-        while (loops < 5) { 
+        while (loops < 3) { 
             if (!isGenerating) break;
 
             const completion = await agentEngine.chat.completions.create({
                 messages: messages, 
-                temperature: 0.7, 
-                stream: true,
-                max_tokens: 2000 // Limit output to prevent runaway generation
+                temperature: 0.1, // Low temperature for stability
+                top_p: 0.9,
+                stream: true
             });
 
             let currentChunk = "";
@@ -200,15 +255,21 @@ async function runAgentLoop(query) {
                 if (delta) {
                     currentChunk += delta;
                     finalResponse += delta;
+                    
+                    // Early stopping if it starts generating garbage patterns
+                    if (finalResponse.includes("Notre_Dame") || finalResponse.includes("eter__") || finalResponse.includes("<?xml")) {
+                        throw new Error("Hallucination detected. Stopping generation.");
+                    }
+
                     parseAndRender(finalResponse, content);
                     smartScroll();
                 }
             }
 
             // Check for Tool
-            const toolCall = parseToolAction(currentChunk);
+            const toolCall = tryParseToolCall(currentChunk);
             if (toolCall) {
-                statusText.textContent = "Fetching Data...";
+                statusText.textContent = "Running Tool...";
                 
                 let result = { text: "Error" };
                 if (Tools[toolCall.name]) result = await Tools[toolCall.name](toolCall.args);
@@ -220,7 +281,7 @@ async function runAgentLoop(query) {
                 
                 // Feed back to model
                 messages.push({ role: "assistant", content: currentChunk });
-                messages.push({ role: "user", content: `OBSERVATION: ${JSON.stringify(result.text)}. Now answer.` });
+                messages.push({ role: "user", content: `Result: ${JSON.stringify(result.text)}. Answer now.` });
                 
                 finalResponse = ""; 
                 loops++;
