@@ -8,82 +8,27 @@ const OPENSKY_CONFIG = {
     creator: "Hafij Shaikh"
 };
 
+// MODEL: Qwen 2.5 3B
+// NOTE: This is a small model (3B). It requires short context and simple instructions.
 const AGENT_MODEL = {
     id: "Qwen2.5-3B-Instruct-q4f16_1-MLC",
     name: "Agent",
 };
 
-// MCP-STYLE TOOL SCHEMA (Stable for small models)
-const TOOL_SCHEMA = `
-You have access to the following functions:
-
-{
-  "name": "get_weather",
-  "description": "Get current weather for a city",
-  "parameters": { "city": "string" }
-}
-{
-  "name": "get_wiki",
-  "description": "Get Wikipedia summary",
-  "parameters": { "topic": "string" }
-}
-{
-  "name": "get_crypto",
-  "description": "Get crypto price (use ids: bitcoin, ethereum)",
-  "parameters": { "id": "string" }
-}
-{
-  "name": "get_joke",
-  "description": "Get a random joke",
-  "parameters": {}
-}
-{
-  "name": "get_advice",
-  "description": "Get random advice",
-  "parameters": {}
-}
-{
-  "name": "get_pokemon",
-  "description": "Get Pokemon info",
-  "parameters": { "name": "string" }
-}
-{
-  "name": "get_country",
-  "description": "Get country info",
-  "parameters": { "name": "string" }
-}
-{
-  "name": "get_definition",
-  "description": "Define a word",
-  "parameters": { "word": "string" }
-}
-{
-  "name": "get_bored_activity",
-  "description": "Get a random activity",
-  "parameters": {}
-}
-
-TO USE A FUNCTION:
-Reply ONLY with the JSON object: {"name": "function_name", "arguments": {"param": "value"}}.
-Do NOT output any other text when using a function.
-`;
-
-// SYSTEM PROMPT
+// SYSTEM PROMPT: Simplified for Small Models
 const SYSTEM_PROMPT = `
-You are ${OPENSKY_CONFIG.agent_name}, created by ${OPENSKY_CONFIG.creator}.
+You are a helpful assistant named ${OPENSKY_CONFIG.agent_name}.
+You were created by ${OPENSKY_CONFIG.creator}.
 
-CRITICAL RULES:
-1. Respond ONLY in the language the user speaks.
-2. NEVER generate random text, code, or symbols.
-3. If you don't know the answer, say "I don't know".
-4. If you need real-time data, use the provided functions.
-5. Keep responses brief.
-
- ${TOOL_SCHEMA}
+Rules:
+1. Be concise.
+2. Answer directly.
+3. To use a tool, output: ACTION: tool_name ARGS: value
+4. Available tools: wiki(topic), weather(city), crypto(id), joke(), advice(), bored(), pokemon(name), country(name), define(word).
 `;
 
 const conversationHistory = [];
-const MAX_HISTORY = 10; // VERY short to prevent drift
+const MAX_HISTORY = 10; // Very short memory for 3B models
 
 // ==========================================
 // 2. DOM & STATE
@@ -111,77 +56,94 @@ let animationFrameId = null;
 // 3. TOOLS
 // ==========================================
 const Tools = {
-    get_weather: async (args) => {
-        const city = args.city;
+    wiki: async (q) => {
+        const res = await fetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(q)}`);
+        const d = await res.json();
+        return { text: d.extract, image: d.thumbnail?.source };
+    },
+    weather: async (city) => {
         const geo = await (await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(city)}`)).json();
         if(!geo.results?.[0]) return { text: "City not found" };
         const { latitude, longitude, name } = geo.results[0];
         const w = await (await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current_weather=true`)).json();
         return { text: `Weather in ${name}: ${w.current_weather.temperature}°C` };
     },
-    get_wiki: async (args) => {
-        const topic = args.topic;
-        const res = await fetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(topic)}`);
-        const d = await res.json();
-        return { text: d.extract, image: d.thumbnail?.source };
-    },
-    get_crypto: async (args) => {
-        const id = args.id;
-        const res = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${id}&vs_currencies=usd`);
-        const d = await res.json();
-        if(d[id]) return { text: `${id} is $${d[id].usd}` };
-        return { text: "Coin not found" };
-    },
-    get_joke: async () => {
-        const d = await (await fetch("https://v2.jokeapi.dev/joke/Any?type=single")).json();
-        return { text: d.joke };
-    },
-    get_advice: async () => {
-        const d = JSON.parse(await (await fetch("https://api.adviceslip.com/advice")).text());
-        return { text: d.slip.advice };
-    },
-    get_pokemon: async (args) => {
-        const name = args.name;
-        const res = await fetch(`https://pokeapi.co/api/v2/pokemon/${name.toLowerCase()}`);
-        const d = await res.json();
-        return { text: `#${d.id} ${d.name}`, image: d.sprites?.front_default };
-    },
-    get_country: async (args) => {
-        const name = args.name;
-        const res = await fetch(`https://restcountries.com/v3.1/name/${name}`);
-        const d = await res.json();
-        return { text: `${d[0].name.common}, Capital: ${d[0].capital}`, image: d[0].flags?.svg };
-    },
-    get_definition: async (args) => {
+    define: async (word) => {
         try {
-            const res = await fetch(`https://api.dictionaryapi.dev/api/v2/entries/en/${args.word}`);
+            const res = await fetch(`https://api.dictionaryapi.dev/api/v2/entries/en/${word}`);
             const d = await res.json();
             return { text: d[0].meanings[0].definitions[0].definition };
         } catch { return { text: "Not found" }; }
     },
-    get_bored_activity: async () => {
+    pokemon: async (name) => {
+        const res = await fetch(`https://pokeapi.co/api/v2/pokemon/${name.toLowerCase()}`);
+        const d = await res.json();
+        return { text: `#${d.id} ${d.name}`, image: d.sprites?.front_default };
+    },
+    country: async (name) => {
+        const res = await fetch(`https://restcountries.com/v3.1/name/${name}`);
+        const d = await res.json();
+        return { text: `${d[0].name.common}, Capital: ${d[0].capital}`, image: d[0].flags?.svg };
+    },
+    joke: async () => {
+        const d = await (await fetch("https://v2.jokeapi.dev/joke/Any?type=single")).json();
+        return { text: d.joke };
+    },
+    advice: async () => {
+        const d = JSON.parse(await (await fetch("https://api.adviceslip.com/advice")).text());
+        return { text: d.slip.advice };
+    },
+    bored: async () => {
         const d = await (await fetch("https://www.boredapi.com/api/activity")).json();
         return { text: d.activity };
+    },
+    crypto: async (id) => {
+        const res = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${id}&vs_currencies=usd`);
+        const d = await res.json();
+        if(d[id]) return { text: `${id} is $${d[id].usd}` };
+        return { text: "Coin not found" };
     }
 };
 
-// Robust JSON parser for MCP output
-function tryParseToolCall(text) {
-    try {
-        // Try to find a JSON object in the output
-        const jsonMatch = text.match(/\{[\s\S]*"name"\s*:\s*"[\w_]+"\s*,\s*"arguments"\s*:\s*\{[\s\S]*\}\s*\}/);
-        if (jsonMatch) {
-            const obj = JSON.parse(jsonMatch[0]);
-            if (obj.name && obj.arguments) {
-                return { name: obj.name, args: obj.arguments };
-            }
-        }
-    } catch (e) { /* Ignore parse errors */ }
-    return null;
+function parseToolAction(text) {
+    const match = text.match(/ACTION:\s*(\w+)\s*ARGS:\s*([^\n]+)/i);
+    if (!match) return null;
+    return { name: match[1].toLowerCase(), args: match[2].trim() };
 }
 
 // ==========================================
-// 4. SMOOTH LOADING ANIMATION
+// 4. GIBBERISH DETECTOR
+// ==========================================
+function isGibberish(text) {
+    // Detect common hallucination patterns from Qwen 2.5 3B
+    const patterns = [
+        /Notre_Dame/i,
+        /adia November/i,
+        /RTLIater/i,
+        /eter__/i,
+        /google Israelisimilar/i,
+        /\.\.\.\.\.\./, // Multiple dots
+        /{.*}/, // JSON artifacts
+        /</?,?>/ // XML/HTML artifacts
+    ];
+    
+    let noiseCount = 0;
+    for(const p of patterns) {
+        if(p.test(text)) noiseCount++;
+    }
+    
+    // If we see 2 or more artifacts, it's likely garbage
+    if(noiseCount >= 2) return true;
+    
+    // Check for high ratio of non-alphanumeric characters
+    const clean = text.replace(/[^a-zA-Z0-9\s]/g, '');
+    if (text.length > 50 && clean.length < text.length * 0.7) return true;
+
+    return false;
+}
+
+// ==========================================
+// 5. SMOOTH LOADING ANIMATION
 // ==========================================
 function animateProgress() {
     const diff = targetProgress - currentProgress;
@@ -194,7 +156,7 @@ function animateProgress() {
 }
 
 // ==========================================
-// 5. LOGIC
+// 6. LOGIC
 // ==========================================
 
 function smartScroll() { messagesArea.scrollTop = messagesArea.scrollHeight; }
@@ -224,9 +186,9 @@ async function runAgentLoop(query) {
 
     try {
         // AGGRESSIVE MEMORY MANAGEMENT
-        // If history is too long, model will crash/hallucinate
         while (conversationHistory.length > MAX_HISTORY * 2) {
-            conversationHistory.splice(0, 2); // Remove oldest turn
+            conversationHistory.shift();
+            conversationHistory.shift();
         }
 
         let messages = [
@@ -241,24 +203,31 @@ async function runAgentLoop(query) {
         while (loops < 3) { 
             if (!isGenerating) break;
 
+            // CRITICAL: Temperature 0.0 and Low Tokens for stability
             const completion = await agentEngine.chat.completions.create({
                 messages: messages, 
-                temperature: 0.1, // Low temperature for stability
-                top_p: 0.9,
+                temperature: 0.0, 
+                max_tokens: 1000, 
                 stream: true
             });
 
             let currentChunk = "";
+            let streamBroken = false;
+
             for await (const chunk of completion) {
                 if (!isGenerating) break;
                 const delta = chunk.choices[0].delta.content;
                 if (delta) {
                     currentChunk += delta;
                     finalResponse += delta;
-                    
-                    // Early stopping if it starts generating garbage patterns
-                    if (finalResponse.includes("Notre_Dame") || finalResponse.includes("eter__") || finalResponse.includes("<?xml")) {
-                        throw new Error("Hallucination detected. Stopping generation.");
+
+                    // LIVE GIBBERISH FILTER
+                    if (isGibberish(currentChunk)) {
+                        streamBroken = true;
+                        console.warn("Gibberish detected. Stopping stream.");
+                        // Add a clean break message
+                        finalResponse = "[Generating error... please try again]";
+                        break; 
                     }
 
                     parseAndRender(finalResponse, content);
@@ -266,8 +235,14 @@ async function runAgentLoop(query) {
                 }
             }
 
+            if (streamBroken) {
+                // If we stopped due to gibberish, clear history to reset context
+                conversationHistory.length = 0;
+                break;
+            }
+
             // Check for Tool
-            const toolCall = tryParseToolCall(currentChunk);
+            const toolCall = parseToolAction(currentChunk);
             if (toolCall) {
                 statusText.textContent = "Running Tool...";
                 
@@ -279,9 +254,9 @@ async function runAgentLoop(query) {
                 if (result.image) resultHtml += `<img src="${result.image}" alt="img">`;
                 content.innerHTML += resultHtml;
                 
-                // Feed back to model
+                // Feed back
                 messages.push({ role: "assistant", content: currentChunk });
-                messages.push({ role: "user", content: `Result: ${JSON.stringify(result.text)}. Answer now.` });
+                messages.push({ role: "user", content: `Observation: ${JSON.stringify(result.text)}` });
                 
                 finalResponse = ""; 
                 loops++;
@@ -305,7 +280,7 @@ async function runAgentLoop(query) {
 }
 
 // ==========================================
-// 6. RENDERER
+// 7. RENDERER
 // ==========================================
 function parseAndRender(text, container) {
     let html = text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -324,7 +299,7 @@ window.copyCode = (btn) => {
 };
 
 // ==========================================
-// 7. INITIALIZATION
+// 8. INITIALIZATION
 // ==========================================
 function showError(t, e) { 
     debugLog.style.display = 'block'; 
@@ -380,7 +355,7 @@ async function init() {
 }
 
 // ==========================================
-// 8. EVENTS
+// 9. EVENTS
 // ==========================================
 
 async function handleAction() {
