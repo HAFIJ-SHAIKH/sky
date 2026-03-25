@@ -9,20 +9,11 @@ const OPENSKY_CONFIG = {
 };
 
 // MODEL: Qwen 2.5 3B
+// Note: This is a standard ID. We do NOT need a custom appConfig.
+// WebLLM will automatically find the correct model files on Hugging Face.
 const AGENT_MODEL = {
     id: "Qwen2.5-3B-Instruct-q4f16_1-MLC",
     name: "Qwen 2.5 3B",
-};
-
-// CUSTOM CONFIG
-const myAppConfig = {
-  model_list: [
-    {
-      model_id: "Qwen2.5-3B-Instruct-q4f16_1-MLC",
-      model: "https://huggingface.co",
-      model_lib: webllm.modelLibURLPrefix + webllm.modelVersion + "/Qwen2.5-3B-Instruct-q4f16_1-wasm-ot.wasm",
-    },
-  ],
 };
 
 // SYSTEM PROMPT: Strict Identity & Execution
@@ -319,8 +310,9 @@ async function init() {
         targetProgress = 0;
         animationFrameId = requestAnimationFrame(animateProgress);
 
+        // Load Model WITHOUT custom config (fixes Fetch error)
         agentEngine = await webllm.CreateMLCEngine(AGENT_MODEL.id, {
-            appConfig: myAppConfig,
+            // NO appConfig needed - uses default registry
             initProgressCallback: (report) => {
                 targetProgress = report.progress * 100;
                 document.getElementById('status-agent').textContent = report.text;
