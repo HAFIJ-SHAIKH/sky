@@ -8,41 +8,42 @@ const OPENSKY_CONFIG = {
     creator: "Hafij Shaikh"
 };
 
-// MODEL: Llama-3.2-3B (Newer & Stronger Logic)
+// MODEL: Llama 3.2 3B (Smart, Natural Multilingual)
 const AGENT_MODEL = {
     id: "Llama-3.2-3B-Instruct-q4f16_1-MLC",
     name: "Agent",
 };
 
-// SYSTEM PROMPT: Strict Hinglish Enforcement
+// SYSTEM PROMPT: Natural Hinglish + Tools
 const SYSTEM_PROMPT = `
 You are ${OPENSKY_CONFIG.agent_name}, created by ${OPENSKY_CONFIG.creator}.
-You are a smart assistant who speaks fluent Hinglish (Hindi + English mix).
+You are a smart, helpful assistant who speaks fluent Hinglish naturally.
 
-### LANGUAGE RULES (CRITICAL) ###
-- You MUST speak in Hinglish.
-- Style: "Yaar, kya scene hai?", "Main hoon na help karne ke liye."
-- Use Hindi words written in English script (Transliteration).
-- Example User: "Kya ho raha hai?" -> Example You: "Kuch nahi yaar, bas chill maaro."
+### LANGUAGE STYLE (Native) ###
+- Speak naturally in Hinglish (Hindi + English mix).
+- Example: "Yaar, kya scene hai?", "Main hoon na help karne ke liye."
+- Use Hindi words in English script (Transliteration).
+- Be casual and friendly.
 
-### TOOL RULES ###
-- Use tools for: Weather, Wiki, Charts, Photos.
+### TOOL RULES (Strict) ###
+- Use tools ONLY for: Weather, Wiki, Charts, Photos, Comparisons, Timelines.
+- When using a tool, output STRICTLY in JSON format. Do NOT mix it with Hinglish text.
 - Format: ACTION: tool_name ARGS: {"arg": "value"}
-- Stop text immediately after calling a tool.
+- Stop generating text immediately after the ACTION line.
 
 AVAILABLE TOOLS:
 - get_wiki(topic)
-- get_weather(city)
 - create_profile_chart(items)
-- create_comparison(i1, i2)
+- create_comparison(item1, item2)
 - create_timeline(events)
 - generate_qr_code(text)
-- translate_text(text, lang)
-- convert_currency(amt, from, to)
+- translate_text(text, target_lang)
+- convert_currency(amount, from, to)
 - get_random_quote()
 - create_flashcards(topic, cards)
 - get_crypto(id)
 - search_image(query)
+- get_weather(city)
 `;
 
 const conversationHistory = [];
@@ -61,7 +62,6 @@ const loadingPercent = document.getElementById('loadingPercent');
 const loadingLabel = document.getElementById('loadingLabel');
 const modelStatusContainer = document.getElementById('modelStatusContainer');
 const debugLog = document.getElementById('debugLog');
-const clearBtn = document.getElementById('clearBtn');
 
 let agentEngine = null;
 let isGenerating = false;
@@ -73,65 +73,77 @@ let animationFrameId = null;
 // 3. TOOLS (13 Total)
 // ==========================================
 const Tools = {
+    // 1. Wiki
     get_wiki: async (args) => {
         const res = await fetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(args.topic)}`);
         const d = await res.json();
         return { text: d.extract, image: d.thumbnail?.source };
     },
+    // 2. Weather
     get_weather: async (args) => {
         const city = args.city;
         const geo = await (await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(city)}`)).json();
-        if(!geo.results?.[0]) return { text: "City nahi mili yaar." };
+        if(!geo.results?.[0]) return { text: "City nahi mili yaar" };
         const { latitude, longitude, name } = geo.results[0];
         const w = await (await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current_weather=true`)).json();
         return { text: `${name} mein ${w.current_weather.temperature}°C hai.` };
     },
+    // 3. Profile Chart
     create_profile_chart: async (args) => {
         return { text: "Profiles ban gaye hain.", profile: args.items };
     },
+    // 4. Comparison
     create_comparison: async (args) => {
-        return { text: "Comparison ready hai.", comparison: { item1: args.item1, item2: args.item2 } };
+        return { text: "Comparison done.", comparison: { item1: args.item1, item2: args.item2 } };
     },
+    // 5. Timeline
     create_timeline: async (args) => {
-        return { text: "Timeline ban gayi.", timeline: args.events };
+        return { text: "Timeline ready.", timeline: args.events };
     },
+    // 6. QR Code
     generate_qr_code: async (args) => {
         const text = args.text || "https://google.com";
-        return { text: "QR Code mil gaya.", qr: `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(text)}` };
+        return { text: "QR Code ban gaya.", qr: `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(text)}` };
     },
+    // 7. Translate
     translate_text: async (args) => {
-        const res = await fetch(`https://api.mymemory.translated.net/get?q=${encodeURIComponent(args.text)}&langpair=en|${args.target_lang || 'hi'}`);
+        const res = await fetch(`https://api.mymemory.translated.net/get?q=${encodeURIComponent(args.text)}&langpair=en|${args.target_lang}`);
         const d = await res.json();
         return { text: d.responseData.translatedText };
     },
+    // 8. Currency
     convert_currency: async (args) => {
         const { amount, from, to } = args;
         const res = await fetch(`https://open.er-api.com/v6/latest/${from}`);
         const d = await res.json();
         if(d.rates && d.rates[to]) {
             const val = (amount * d.rates[to]).toFixed(2);
-            return { text: `${amount} ${from} matlab ${val} ${to} hai.` };
+            return { text: `${amount} ${from} = ${val} ${to}` };
         }
-        return { text: "Convert nahi kar paaya." };
+        return { text: "Convert nahi ho paya." };
     },
+    // 9. Quote
     get_random_quote: async () => {
         const res = await fetch("https://api.quotable.io/random");
         const d = await res.json();
         return { text: `"${d.content}" - ${d.author}` };
     },
+    // 10. Flashcards
     create_flashcards: async (args) => {
-        return { text: "Flashcards taiyaar hain.", flashcards: args.cards };
+        return { text: "Flashcards ban gaye.", flashcards: args.cards };
     },
+    // 11. Crypto
     get_crypto: async (args) => {
         const res = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${args.id}&vs_currencies=usd`);
         const d = await res.json();
-        if(d[args.id]) return { text: `${args.id} ka rate $${d[args.id].usd} hai.` };
+        if(d[args.id]) return { text: `${args.id} ka price $${d[args.id].usd} hai.` };
         return { text: "Coin nahi mila." };
     },
+    // 12. Image Search
     search_image: async (args) => {
         const res = await fetch(`https://api.openverse.org/v1/images/?q=${encodeURIComponent(args.query)}`);
         const d = await res.json();
-        if(d.results && d.results[0]) return { text: "Image mil gaya.", image: d.results[0].url };
+        if(d.results && d.results[0]) return { text: "Image mil gayi.", image: d.results[0].url };
         return { text: "Image nahi mili." };
     }
 };
@@ -197,14 +209,13 @@ async function runAgentLoop(query) {
 
         let finalResponse = "";
         let loops = 0;
+        let forceStop = false;
 
-        while (loops < 10) { 
-            if (!isGenerating) break;
+        while (loops < 10 && !forceStop) {
+            if (!isGenerating) { forceStop = true; break; }
 
             const completion = await agentEngine.chat.completions.create({
-                messages: messages, 
-                temperature: 0.7, // Slightly higher for natural flow
-                stream: true
+                messages: messages, temperature: 0.7, stream: true
             });
 
             let currentChunk = "";
@@ -212,7 +223,7 @@ async function runAgentLoop(query) {
             content.appendChild(textNode);
 
             for await (const chunk of completion) {
-                if (!isGenerating) break;
+                if (!isGenerating) { forceStop = true; break; }
                 const delta = chunk.choices[0].delta.content;
                 if (delta) {
                     currentChunk += delta;
@@ -222,13 +233,12 @@ async function runAgentLoop(query) {
                 }
             }
 
-            if (!isGenerating) break;
-            
+            if (forceStop) break;
             parseAndRender(finalResponse, content);
 
             const toolCall = parseToolAction(currentChunk);
             if (toolCall) {
-                statusText.textContent = "Tool Chal raha hai...";
+                statusText.textContent = "Tool chal raha hai...";
                 let result = { text: "Error" };
                 if (Tools[toolCall.name]) result = await Tools[toolCall.name](toolCall.args);
                 
@@ -240,25 +250,37 @@ async function runAgentLoop(query) {
                 if (result.profile) {
                     resultHtml += `<div class="profile-grid">`;
                     result.profile.forEach(p => {
-                        resultHtml += `<div class="profile-card"><img src="${p.image}" class="profile-img"><div class="profile-info"><h3>${p.name}</h3><p>${p.desc || ''}</p></div></div>`;
+                        resultHtml += `<div class="profile-card">
+                            <img src="${p.image}" class="profile-img">
+                            <div class="profile-info"><h3>${p.name}</h3><p>${p.desc || ''}</p></div>
+                        </div>`;
                     });
                     resultHtml += `</div>`;
                 }
+
                 if (result.comparison) {
-                    const i1 = result.comparison.item1; const i2 = result.comparison.item2;
+                    const i1 = result.comparison.item1;
+                    const i2 = result.comparison.item2;
                     resultHtml += `<table class="comparison-table"><tr><th>Feature</th><th>${i1.name}</th><th>${i2.name}</th></tr>`;
                     resultHtml += `<tr><td>Info</td><td>${i1.desc || 'N/A'}</td><td>${i2.desc || 'N/A'}</td></tr>`;
                     resultHtml += `</table>`;
                 }
+
                 if (result.timeline) {
                     resultHtml += `<div class="timeline-container">`;
-                    result.timeline.forEach(e => { resultHtml += `<div class="timeline-item"><div class="timeline-date">${e.date}</div><div class="timeline-content">${e.event}</div></div>`; });
+                    result.timeline.forEach(e => {
+                        resultHtml += `<div class="timeline-item"><div class="timeline-date">${e.date}</div><div class="timeline-content">${e.event}</div></div>`;
+                    });
                     resultHtml += `</div>`;
                 }
-                if (result.qr) resultHtml += `<div class="qr-container"><img src="${result.qr}" alt="QR Code"></div>`;
+
+                if (result.qr) resultHtml += `<div class="qr-container"><img src="${result.qr}" alt="QR"></div>`;
+                
                 if (result.flashcards) {
                     resultHtml += `<div class="flashcard-grid">`;
-                    result.flashcards.forEach(c => { resultHtml += `<div class="flashcard"><div class="flashcard-q">${c.q}</div><div class="flashcard-a">${c.a}</div></div>`; });
+                    result.flashcards.forEach(c => {
+                        resultHtml += `<div class="flashcard"><div class="flashcard-q">${c.q}</div><div class="flashcard-a">${c.a}</div></div>`;
+                    });
                     resultHtml += `</div>`;
                 }
 
@@ -364,10 +386,8 @@ async function handleAction() {
         isGenerating = false; 
         sendBtn.classList.remove('stop-btn');
         if(agentEngine) {
-            try {
-                await agentEngine.interruptGenerate();
-                await agentEngine.resetChat();
-            } catch(e) { console.log("Reset error", e); }
+            await agentEngine.interruptGenerate();
+            await agentEngine.resetChat();
         }
         return;
     }
@@ -390,14 +410,6 @@ async function handleAction() {
     smartScroll();
     await runAgentLoop(text);
 }
-
-// Clear History Logic
-clearBtn.onclick = () => {
-    conversationHistory.length = 0;
-    messagesArea.innerHTML = '';
-    if(agentEngine) agentEngine.resetChat();
-    console.log("Memory Cleared");
-};
 
 inputText.oninput = function() { this.style.height = 'auto'; this.style.height = Math.min(this.scrollHeight, 100) + 'px'; };
 inputText.onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleAction(); } };
