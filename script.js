@@ -8,15 +8,13 @@ const OPENSKY_CONFIG = {
     creator: "Hafij Shaikh"
 };
 
-// MODEL: Llama-3.2-3B-Instruct
-// Pros: Extremely smart, great logic, very stable.
-// Cons: Hinglish is good but not native (we force it in prompt).
+// MODEL: Llama-3.2-3B (Newer & Stronger Logic)
 const AGENT_MODEL = {
     id: "Llama-3.2-3B-Instruct-q4f16_1-MLC",
     name: "Agent",
 };
 
-// SYSTEM PROMPT: Forcing Llama to speak Hinglish
+// SYSTEM PROMPT: Strict Hinglish Enforcement
 const SYSTEM_PROMPT = `
 You are ${OPENSKY_CONFIG.agent_name}, created by ${OPENSKY_CONFIG.creator}.
 You are a smart assistant who speaks fluent Hinglish (Hindi + English mix).
@@ -32,12 +30,19 @@ You are a smart assistant who speaks fluent Hinglish (Hindi + English mix).
 - Format: ACTION: tool_name ARGS: {"arg": "value"}
 - Stop text immediately after calling a tool.
 
-TOOLS:
-- get_wiki(topic) -> Info & Photo.
-- create_profile_chart(items) -> Photo Cards.
-- get_weather(city) -> Temperature.
-- search_image(query) -> Photos.
-- generate_qr_code(text) -> QR.
+AVAILABLE TOOLS:
+- get_wiki(topic)
+- get_weather(city)
+- create_profile_chart(items)
+- create_comparison(i1, i2)
+- create_timeline(events)
+- generate_qr_code(text)
+- translate_text(text, lang)
+- convert_currency(amt, from, to)
+- get_random_quote()
+- create_flashcards(topic, cards)
+- get_crypto(id)
+- search_image(query)
 `;
 
 const conversationHistory = [];
@@ -65,7 +70,7 @@ let targetProgress = 0;
 let animationFrameId = null;
 
 // ==========================================
-// 3. TOOLS
+// 3. TOOLS (13 Total)
 // ==========================================
 const Tools = {
     get_wiki: async (args) => {
@@ -76,28 +81,58 @@ const Tools = {
     get_weather: async (args) => {
         const city = args.city;
         const geo = await (await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(city)}`)).json();
-        if(!geo.results?.[0]) return { text: "City nahi mili" };
+        if(!geo.results?.[0]) return { text: "City nahi mili yaar." };
         const { latitude, longitude, name } = geo.results[0];
         const w = await (await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current_weather=true`)).json();
-        return { text: `Weather in ${name}: ${w.current_weather.temperature}°C` };
+        return { text: `${name} mein ${w.current_weather.temperature}°C hai.` };
     },
     create_profile_chart: async (args) => {
-        return { text: "Profiles created.", profile: args.items };
+        return { text: "Profiles ban gaye hain.", profile: args.items };
     },
-    search_image: async (args) => {
-        const res = await fetch(`https://api.openverse.org/v1/images/?q=${encodeURIComponent(args.query)}`);
-        const d = await res.json();
-        if(d.results && d.results[0]) return { text: "Image found.", image: d.results[0].url };
-        return { text: "Image nahi mila." };
+    create_comparison: async (args) => {
+        return { text: "Comparison ready hai.", comparison: { item1: args.item1, item2: args.item2 } };
+    },
+    create_timeline: async (args) => {
+        return { text: "Timeline ban gayi.", timeline: args.events };
     },
     generate_qr_code: async (args) => {
         const text = args.text || "https://google.com";
-        return { text: "QR Ready.", qr: `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(text)}` };
+        return { text: "QR Code mil gaya.", qr: `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(text)}` };
+    },
+    translate_text: async (args) => {
+        const res = await fetch(`https://api.mymemory.translated.net/get?q=${encodeURIComponent(args.text)}&langpair=en|${args.target_lang || 'hi'}`);
+        const d = await res.json();
+        return { text: d.responseData.translatedText };
+    },
+    convert_currency: async (args) => {
+        const { amount, from, to } = args;
+        const res = await fetch(`https://open.er-api.com/v6/latest/${from}`);
+        const d = await res.json();
+        if(d.rates && d.rates[to]) {
+            const val = (amount * d.rates[to]).toFixed(2);
+            return { text: `${amount} ${from} matlab ${val} ${to} hai.` };
+        }
+        return { text: "Convert nahi kar paaya." };
     },
     get_random_quote: async () => {
         const res = await fetch("https://api.quotable.io/random");
         const d = await res.json();
         return { text: `"${d.content}" - ${d.author}` };
+    },
+    create_flashcards: async (args) => {
+        return { text: "Flashcards taiyaar hain.", flashcards: args.cards };
+    },
+    get_crypto: async (args) => {
+        const res = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${args.id}&vs_currencies=usd`);
+        const d = await res.json();
+        if(d[args.id]) return { text: `${args.id} ka rate $${d[args.id].usd} hai.` };
+        return { text: "Coin nahi mila." };
+    },
+    search_image: async (args) => {
+        const res = await fetch(`https://api.openverse.org/v1/images/?q=${encodeURIComponent(args.query)}`);
+        const d = await res.json();
+        if(d.results && d.results[0]) return { text: "Image mil gaya.", image: d.results[0].url };
+        return { text: "Image nahi mili." };
     }
 };
 
@@ -106,14 +141,16 @@ function parseToolAction(text) {
     if (match) {
         try {
             const jsonMatch = match[2].match(/\{[\s\S]*\}/);
-            if (jsonMatch) return { name: match[1].toLowerCase(), args: JSON.parse(jsonMatch[0]) };
+            if (jsonMatch) {
+                return { name: match[1].toLowerCase(), args: JSON.parse(jsonMatch[0]) };
+            }
         } catch (e) { console.log("Parse Error", e); }
     }
     return null;
 }
 
 // ==========================================
-// 4. LOGIC
+// 4. SMOOTH LOADING
 // ==========================================
 function animateProgress() {
     const diff = targetProgress - currentProgress;
@@ -125,6 +162,9 @@ function animateProgress() {
     animationFrameId = requestAnimationFrame(animateProgress);
 }
 
+// ==========================================
+// 5. LOGIC
+// ==========================================
 function smartScroll() { messagesArea.scrollTop = messagesArea.scrollHeight; }
 
 function createMessageDiv() {
@@ -158,12 +198,12 @@ async function runAgentLoop(query) {
         let finalResponse = "";
         let loops = 0;
 
-        while (loops < 5) { 
+        while (loops < 10) { 
             if (!isGenerating) break;
 
             const completion = await agentEngine.chat.completions.create({
                 messages: messages, 
-                temperature: 0.7, // Higher temp for creative Hinglish
+                temperature: 0.7, // Slightly higher for natural flow
                 stream: true
             });
 
@@ -183,6 +223,7 @@ async function runAgentLoop(query) {
             }
 
             if (!isGenerating) break;
+            
             parseAndRender(finalResponse, content);
 
             const toolCall = parseToolAction(currentChunk);
@@ -191,8 +232,11 @@ async function runAgentLoop(query) {
                 let result = { text: "Error" };
                 if (Tools[toolCall.name]) result = await Tools[toolCall.name](toolCall.args);
                 
+                // Visualize Result
                 let resultHtml = `<div class="tool-result"><b>Result:</b> ${result.text}</div>`;
+                
                 if (result.image) resultHtml += `<img src="${result.image}" style="max-width:100%; border-radius:8px; margin-top:5px;">`;
+                
                 if (result.profile) {
                     resultHtml += `<div class="profile-grid">`;
                     result.profile.forEach(p => {
@@ -200,12 +244,28 @@ async function runAgentLoop(query) {
                     });
                     resultHtml += `</div>`;
                 }
-                if (result.qr) resultHtml += `<div class="qr-container"><img src="${result.qr}"></div>`;
+                if (result.comparison) {
+                    const i1 = result.comparison.item1; const i2 = result.comparison.item2;
+                    resultHtml += `<table class="comparison-table"><tr><th>Feature</th><th>${i1.name}</th><th>${i2.name}</th></tr>`;
+                    resultHtml += `<tr><td>Info</td><td>${i1.desc || 'N/A'}</td><td>${i2.desc || 'N/A'}</td></tr>`;
+                    resultHtml += `</table>`;
+                }
+                if (result.timeline) {
+                    resultHtml += `<div class="timeline-container">`;
+                    result.timeline.forEach(e => { resultHtml += `<div class="timeline-item"><div class="timeline-date">${e.date}</div><div class="timeline-content">${e.event}</div></div>`; });
+                    resultHtml += `</div>`;
+                }
+                if (result.qr) resultHtml += `<div class="qr-container"><img src="${result.qr}" alt="QR Code"></div>`;
+                if (result.flashcards) {
+                    resultHtml += `<div class="flashcard-grid">`;
+                    result.flashcards.forEach(c => { resultHtml += `<div class="flashcard"><div class="flashcard-q">${c.q}</div><div class="flashcard-a">${c.a}</div></div>`; });
+                    resultHtml += `</div>`;
+                }
 
                 content.innerHTML += resultHtml;
                 
                 messages.push({ role: "assistant", content: currentChunk });
-                messages.push({ role: "user", content: `System: Tool Success. ${result.text}. Continue.` });
+                messages.push({ role: "user", content: `System: Tool Success. Result: ${result.text}. Continue.` });
                 
                 finalResponse = ""; 
                 loops++;
@@ -230,7 +290,7 @@ async function runAgentLoop(query) {
 }
 
 // ==========================================
-// 5. RENDERER & INIT
+// 6. RENDERER
 // ==========================================
 function parseAndRender(text, container) {
     let html = text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -245,17 +305,26 @@ window.copyCode = (btn) => {
     btn.textContent = 'Copied';
 };
 
+// ==========================================
+// 7. INITIALIZATION
+// ==========================================
 function showError(t, e) { 
     debugLog.style.display = 'block'; 
     debugLog.innerHTML = `${t}: ${e.message}`; 
+    console.error(e);
 }
 
 async function init() {
     try {
-        loadingLabel.textContent = "Checking WebGPU...";
+        loadingLabel.textContent = "Initializing...";
         if (!navigator.gpu) throw new Error("WebGPU not supported.");
 
-        modelStatusContainer.innerHTML = `<div class="model-card"><div class="model-card-name">${AGENT_MODEL.name}</div><div class="model-card-desc" id="status-agent">Waiting...</div></div>`;
+        modelStatusContainer.innerHTML = `
+          <div class="model-card">
+            <div class="model-card-name">${AGENT_MODEL.name}</div>
+            <div class="model-card-desc" id="status-agent">Waiting...</div>
+          </div>
+        `;
 
         cancelAnimationFrame(animationFrameId);
         currentProgress = 0; targetProgress = 0;
@@ -288,7 +357,7 @@ async function init() {
 }
 
 // ==========================================
-// 6. EVENTS
+// 8. EVENTS
 // ==========================================
 async function handleAction() {
     if (isGenerating) {
@@ -322,10 +391,12 @@ async function handleAction() {
     await runAgentLoop(text);
 }
 
+// Clear History Logic
 clearBtn.onclick = () => {
     conversationHistory.length = 0;
     messagesArea.innerHTML = '';
     if(agentEngine) agentEngine.resetChat();
+    console.log("Memory Cleared");
 };
 
 inputText.oninput = function() { this.style.height = 'auto'; this.style.height = Math.min(this.scrollHeight, 100) + 'px'; };
