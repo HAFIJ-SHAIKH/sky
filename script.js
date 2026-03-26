@@ -13,19 +13,23 @@ const AGENT_MODEL = {
     name: "Agent",
 };
 
-// SYSTEM PROMPT: Hinglish + Stability
+// SYSTEM PROMPT: Urdu + Hindi in English Script
 const SYSTEM_PROMPT = `
 You are ${OPENSKY_CONFIG.agent_name}, created by ${OPENSKY_CONFIG.creator}.
-Tum Hinglish (Hindi + English mix) mein baat karte ho. Friendly aur casual ho.
+
+### LANGUAGE RULES ###
+- You MUST speak in a mix of Urdu and Hindi, written in English script (Roman Urdu).
+- Example: "Main bilkul theek hoon, aap sunaiye. Kya madad kar sakta hoon?"
+- Keep it friendly and casual.
+- Do NOT speak formal English.
 
 ### TOOL RULES ###
 - Use tools ONLY for real-time data (Weather, Charts, Wiki).
 - FORMAT: ACTION: tool_name ARGS: json_data
-- After tool result, generate the final answer.
 
 TOOLS:
 - get_wiki(topic)
-- create_profile_chart(items) -> For "Scientists with photos"
+- create_profile_chart(items)
 - get_weather(city)
 - generate_chart(data)
 - get_crypto(id)
@@ -69,7 +73,7 @@ const Tools = {
     get_weather: async (args) => {
         const city = args.city;
         const geo = await (await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(city)}`)).json();
-        if(!geo.results?.[0]) return { text: "City nahi mili." };
+        if(!geo.results?.[0]) return { text: "Shehar nahi mila." };
         const { latitude, longitude, name } = geo.results[0];
         const w = await (await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current_weather=true`)).json();
         return { text: `${name} mein temperature ${w.current_weather.temperature}°C hai.` };
@@ -136,7 +140,7 @@ function createMessageDiv() {
     msgDiv.className = 'message assistant';
     const status = document.createElement('div');
     status.className = 'agent-status';
-    status.innerHTML = `<span class="agent-status-dot"></span><span class="status-text">Thinking...</span>`;
+    status.innerHTML = `<span class="agent-status-dot"></span><span class="status-text">Soch raha hoon...</span>`;
     const content = document.createElement('div');
     content.className = 'assistant-content';
     msgDiv.appendChild(status);
@@ -356,7 +360,7 @@ async function handleAction() {
             } catch(e) { console.log("Reset error", e); }
         }
         
-        sendBtn.innerHTML = `<svg ...></svg>`;
+        sendBtn.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>`;
         isResetting = false;
         return;
     }
@@ -376,7 +380,7 @@ async function handleAction() {
 
     isGenerating = true;
     sendBtn.classList.add('stop-btn');
-    sendBtn.innerHTML = `<svg ...></svg>`;
+    sendBtn.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"></rect></svg>`;
     
     smartScroll();
     await runAgentLoop(text);
