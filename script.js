@@ -13,31 +13,25 @@ const AGENT_MODEL = {
     name: "Agent",
 };
 
-// SYSTEM PROMPT: Optimized for Hinglish & Stability
+// SYSTEM PROMPT: Hinglish + Stability
 const SYSTEM_PROMPT = `
 You are ${OPENSKY_CONFIG.agent_name}, created by ${OPENSKY_CONFIG.creator}.
-
-### LANGUAGE RULES ###
-- Tum Hinglish (Hindi + English mix) mein baat karte ho.
-- Formal English mat bolo. Casual aur friendly raho.
-- Example: "Main bilkul badhiya hoon! Aap batao, aaj kya plan hai?"
-- User ke text ko repeat mat karo (Do not repeat user text).
+Tum Hinglish (Hindi + English mix) mein baat karte ho. Friendly aur casual ho.
 
 ### TOOL RULES ###
-- Use tools ONLY for real-time data (Weather, Wiki, Charts).
+- Use tools ONLY for real-time data (Weather, Charts, Wiki).
 - FORMAT: ACTION: tool_name ARGS: json_data
+- After tool result, generate the final answer.
 
-AVAILABLE TOOLS:
+TOOLS:
 - get_wiki(topic)
-- create_profile_chart(items) -> Use for "Scientists with photos"
+- create_profile_chart(items) -> For "Scientists with photos"
 - get_weather(city)
 - generate_chart(data)
 - get_crypto(id)
-
-If no tool is needed, just answer normally in Hinglish.
 `;
 
-let conversationHistory = []; // Global history
+let conversationHistory = []; 
 const MAX_HISTORY = 10; 
 
 // ==========================================
@@ -56,7 +50,7 @@ const debugLog = document.getElementById('debugLog');
 
 let agentEngine = null;
 let isGenerating = false;
-let isResetting = false; // Flag to block input during reset
+let isResetting = false; 
 
 // Smooth Progress
 let currentProgress = 0;
@@ -127,7 +121,15 @@ function animateProgress() {
 // 5. LOGIC
 // ==========================================
 
-function smartScroll() { messagesArea.scrollTop = messagesArea.scrollHeight; }
+// FIX: Smart Scroll - Only scroll if user is near bottom
+function smartScroll() {
+    const threshold = 150; // Pixels from bottom
+    const isNearBottom = messagesArea.scrollHeight - messagesArea.scrollTop - messagesArea.clientHeight < threshold;
+    
+    if (isNearBottom) {
+        messagesArea.scrollTop = messagesArea.scrollHeight;
+    }
+}
 
 function createMessageDiv() {
     const msgDiv = document.createElement('div');
@@ -140,7 +142,8 @@ function createMessageDiv() {
     msgDiv.appendChild(status);
     msgDiv.appendChild(content);
     messagesArea.appendChild(msgDiv);
-    smartScroll();
+    // Force scroll on new message creation
+    messagesArea.scrollTop = messagesArea.scrollHeight;
     return { msgDiv, content, status };
 }
 
@@ -149,7 +152,6 @@ async function runAgentLoop(query) {
     const statusText = status.querySelector('.status-text');
 
     try {
-        // History Check
         while (conversationHistory.length > MAX_HISTORY * 2) conversationHistory.shift();
 
         let messages = [
@@ -162,6 +164,11 @@ async function runAgentLoop(query) {
         let loops = 0;
         let forceStop = false;
 
+        // We will manage where the text goes using a specific container
+        // so we don't overwrite Tool Results (Charts).
+        let currentTextContainer = document.createElement("div");
+        content.appendChild(currentTextContainer);
+
         while (loops < 5 && !forceStop) {
             if (!isGenerating) { forceStop = true; break; }
 
@@ -170,8 +177,9 @@ async function runAgentLoop(query) {
             });
 
             let currentChunk = "";
+            // Use a text node for smooth appending without reflowing whole div
             let textNode = document.createTextNode("");
-            content.appendChild(textNode);
+            currentTextContainer.appendChild(textNode);
 
             for await (const chunk of completion) {
                 if (!isGenerating) { forceStop = true; break; }
@@ -186,8 +194,8 @@ async function runAgentLoop(query) {
 
             if (forceStop) break;
             
-            // Parse Markdown once stream is done for this turn
-            parseAndRender(finalResponse, content);
+            // Parse Markdown ONLY for the current chunk container, not the whole 'content'
+            parseAndRender(finalResponse, currentTextContainer);
 
             const toolCall = parseToolAction(currentChunk);
             if (toolCall) {
@@ -199,19 +207,23 @@ async function runAgentLoop(query) {
                 let resultHtml = `<div class="tool-result"><b>Result:</b> ${result.text}</div>`;
                 
                 if (result.image) resultHtml += `<img src="${result.image}" style="max-width:100%; border-radius:8px; margin-top:5px;">`;
+                
+                // CHART FIX: Append chart to MAIN content, not the text container
                 if (result.profile) {
-                    resultHtml += `<div class="profile-grid">`;
+                    let profileHtml = `<div class="profile-grid">`;
                     result.profile.forEach(p => {
-                        resultHtml += `<div class="profile-card">
+                        profileHtml += `<div class="profile-card">
                             <img src="${p.image}" class="profile-img">
                             <div class="profile-info"><h3>${p.name}</h3><p>${p.desc || ''}</p></div>
                         </div>`;
                     });
-                    resultHtml += `</div>`;
-                }
-                if (result.chart) {
+                    profileHtml += `</div>`;
+                    content.insertAdjacentHTML('beforeend', profileHtml);
+                } 
+                else if (result.chart) {
                     const chartId = 'chart_' + Math.random().toString(36).substr(2, 9);
-                    resultHtml += `<div class="chart-card"><canvas id="${chartId}"></canvas></div>`;
+                    // Append chart container to main content
+                    content.insertAdjacentHTML('beforeend', `<div class="chart-card"><canvas id="${chartId}"></canvas></div>`);
                     setTimeout(() => {
                         const ctx = document.getElementById(chartId);
                         if(ctx) new Chart(ctx, { 
@@ -221,9 +233,15 @@ async function runAgentLoop(query) {
                         });
                     }, 100);
                 }
-
-                content.innerHTML += resultHtml;
+                else {
+                    // Standard result
+                    content.insertAdjacentHTML('beforeend', resultHtml);
+                }
                 
+                // Create a NEW container for the NEXT text response (so we don't overwrite the chart)
+                currentTextContainer = document.createElement("div");
+                content.appendChild(currentTextContainer);
+
                 messages.push({ role: "assistant", content: currentChunk });
                 messages.push({ role: "user", content: `Observation: ${result.text}` });
                 
@@ -244,7 +262,7 @@ async function runAgentLoop(query) {
         }
     } finally {
         isGenerating = false;
-        isResetting = false; // Release lock
+        isResetting = false; 
         sendBtn.classList.remove('stop-btn');
         sendBtn.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>`;
     }
@@ -322,32 +340,29 @@ async function init() {
 // ==========================================
 
 async function handleAction() {
-    // CASE 1: STOP BUTTON
+    // STOP LOGIC
     if (isGenerating) {
         console.log("Stopping...");
-        isGenerating = false; // Stop the stream
-        isResetting = true;   // Block new inputs
+        isGenerating = false; 
+        isResetting = true;   
         sendBtn.innerHTML = "Resetting...";
         
         if(agentEngine) {
             try {
                 await agentEngine.interruptGenerate();
                 await agentEngine.resetChat();
-                // CRITICAL: Clear history to prevent corruption on next message
                 conversationHistory = []; 
                 console.log("Engine Reset Complete.");
             } catch(e) { console.log("Reset error", e); }
         }
         
-        sendBtn.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>`;
+        sendBtn.innerHTML = `<svg ...></svg>`;
         isResetting = false;
         return;
     }
 
-    // CASE 2: BLOCK IF RESETTING
     if (isResetting) return;
 
-    // CASE 3: SEND MESSAGE
     const text = inputText.value.trim();
     if (!text) return;
 
@@ -361,7 +376,7 @@ async function handleAction() {
 
     isGenerating = true;
     sendBtn.classList.add('stop-btn');
-    sendBtn.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"></rect></svg>`;
+    sendBtn.innerHTML = `<svg ...></svg>`;
     
     smartScroll();
     await runAgentLoop(text);
